@@ -1,0 +1,161 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  DRIVER
+}
+
+enum DeliveryStatus {
+  PENDING
+  COMPLETED
+}
+
+enum BillStatus {
+  DRAFT
+  SENT
+  PAID
+}
+
+enum InventoryLogType {
+  DELIVERY_OUT
+  COLLECTION_IN
+  ADMIN_RESTOCK
+  ADMIN_EMPTY_DISPATCH
+  MANUAL_ADJUSTMENT
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String?  @unique
+  mobile       String
+  role         Role
+  loginId      String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  driver     Driver?
+  deliveries Delivery[]
+}
+
+model Driver {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  vehicleNumber String
+  vehicleType   String
+  route         String
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  user       User       @relation(fields: [userId], references: [id])
+  clients    Client[]
+  deliveries Delivery[]
+}
+
+model Client {
+  id               String   @id @default(cuid())
+  name             String
+  mobile           String
+  email            String?
+  address          String
+  assignedDriverId String
+  route            String
+  tempoNumber      String
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  assignedDriver Driver        @relation(fields: [assignedDriverId], references: [id])
+  deliveries     Delivery[]
+  invoices       Invoice[]
+  monthlyBills   MonthlyBill[]
+}
+
+model Delivery {
+  id                     String         @id @default(cuid())
+  clientId               String
+  driverId               String
+  userId                 String?
+  deliveryDate           DateTime
+  filledBottlesDelivered Int
+  emptyBottlesCollected  Int
+  status                 DeliveryStatus @default(PENDING)
+  notes                  String?
+  createdAt              DateTime       @default(now())
+
+  client  Client   @relation(fields: [clientId], references: [id])
+  driver  Driver   @relation(fields: [driverId], references: [id])
+  user    User?    @relation(fields: [userId], references: [id])
+  invoice Invoice?
+}
+
+model MonthlyBill {
+  id                    String     @id @default(cuid())
+  clientId              String
+  month                 Int
+  year                  Int
+  totalBottlesDelivered Int
+  totalEmptyCollected   Int
+  ratePerBottle         Decimal    @db.Decimal(10, 2)
+  totalAmount           Decimal    @db.Decimal(10, 2)
+  status                BillStatus @default(DRAFT)
+  whatsappSentAt        DateTime?
+  paidAt                DateTime?
+  pdfPath               String?
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
+
+  client Client @relation(fields: [clientId], references: [id])
+
+  @@unique([clientId, month, year])
+}
+
+model Invoice {
+  id                        String    @id @default(cuid())
+  clientId                  String
+  deliveryId                String    @unique
+  invoiceNumber             String    @unique
+  bottlesTakenSinceLastPaid Int
+  amountPerBottle           Decimal   @db.Decimal(10, 2)
+  totalAmount               Decimal   @db.Decimal(10, 2)
+  isPaid                    Boolean   @default(false)
+  paidAt                    DateTime?
+  paymentQrData             String?
+  createdAt                 DateTime  @default(now())
+
+  client   Client   @relation(fields: [clientId], references: [id])
+  delivery Delivery @relation(fields: [deliveryId], references: [id])
+}
+
+model BottleInventory {
+  id                 Int      @id
+  totalFilledBottles Int      @default(0)
+  totalEmptyBottles  Int      @default(0)
+  lastUpdatedAt      DateTime @updatedAt
+  updatedBy          String
+}
+
+model InventoryLog {
+  id                 String           @id @default(cuid())
+  type               InventoryLogType
+  filledChange       Int
+  emptyChange        Int
+  filledBalanceAfter Int
+  emptyBalanceAfter  Int
+  referenceId        String?
+  note               String?
+  createdBy          String
+  createdAt          DateTime         @default(now())
+}

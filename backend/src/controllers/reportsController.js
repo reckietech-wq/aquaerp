@@ -1,0 +1,247 @@
+const prisma = require('../lib/prisma');
+
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+function parseRange(query) {
+  const now = new Date();
+
+  if (query.from && query.to) {
+    return {
+      start: new Date(query.from + 'T00:00:00.000Z'),
+      end:   new Date(query.to   + 'T23:59:59.999Z'),
+    };
+  }
+
+  // Default: current calendar month
+  return {
+    start: new Date(now.getFullYear(), now.getMonth(), 1),
+    end:   new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999),
+  };
+}
+
+// ─── getSummary ───────────────────────────────────────────────────────────────
+
+async function getSummary(req, res) {
+  const { start, end } = parseRange(req.query);
+
+  const deliveryWhere = { deliveryDate: { gte: start, lte: end }, status: 'COMPLETED' };
+  const invoiceWhere  = { createdAt:    { gte: start, lte: end } };
+
+  // ── Top-level stats ──────────────────────────────────────────────────────
+  const [totalDeliveries, bottleAgg, revenueAgg, paidRevenueAgg, clientCount] =
+    await Promise.all([
+      prisma.delivery.count({ where: deliveryWhere }),
+      prisma.delivery.aggregate({
+        where: deliveryWhere,
+        _sum: { filledBottlesDelivered: true, emptyBottlesCollected: true },
+      }),
+      prisma.invoice.aggregate({
+        where: invoiceWhere,
+        _sum: { totalAmount: true },
+        _count: { id: true },
+      }),
+      prisma.invoice.aggregate({
+        where: { ...invoiceWhere, isPaid: true },
+        _sum: { totalAmount: true },
+        _count: { id: true },
+      }),
+      prisma.delivery.findMany({
+        where: deliveryWhere,
+        select: { clientId: true },
+        distinct: ['clientId'],
+      }).then(r => r.length),
+    ]);
+
+  const totalBottles  = bottleAgg._sum.filledBottlesDelivered ?? 0;
+  const totalRevenue  = parseFloat(revenueAgg._sum.totalAmount   ?? 0);
+  const paidRevenue   = parseFloat(paidRevenueAgg._sum.totalAmount ?? 0);
+  const totalInvoices = revenueAgg._count.id;
+  const paidInvoices  = paidRevenueAgg._count.id;
+
+  // ── Driver breakdown ─────────────────────────────────────────────────────
+  // Group deliveries by driverId
+  const driverDeliveries = await prisma.delivery.groupBy({
+    by:    ['driverId'],
+    where: deliveryWhere,
+    _sum:  { filledBottlesDelivered: true, emptyBottlesCollected: true },
+    _count: { id: true },
+  });
+
+  // Fetch driver details for the IDs we got
+  const driverIds = driverDeliveries.map(d => d.driverId);
+  const drivers = await prisma.driver.findMany({
+    where:  { id: { in: driverIds } },
+    select: {
+      id:    true,
+      route: true,
+      user:  { select: { name: true } },
+      clients: {
+        where:  { isActive: true },
+        select: { id: true },
+      },
+    },
+  });
+  const driverMap = Object.fromEntries(drivers.map(d => [d.id, d]));
+
+  // Fetch paid/total invoice amounts per driver
+  const driverInvoices = await prisma.invoice.groupBy({
+    by:    ['clientId'],
+    where: invoiceWhere,
+    _sum:  { totalAmount: true },
+  });
+  // map clientId → driver via Client table
+  const clientDriverMap = await prisma.client.findMany({
+    where:  { id: { in: driverInvoices.map(i => i.clientId) } },
+    select: { id: true, assignedDriverId: true },
+  }).then(rows => Object.fromEntries(rows.map(r => [r.id, r.assignedDriverId])));
+
+  // Aggregate revenue per driver
+  const driverRevMap = {};
+  for (const inv of driverInvoices) {
+    const dId = clientDriverMap[inv.clientId];
+    if (!dId) continue;
+    driverRevMap[dId] = (driverRevMap[dId] ?? 0) + parseFloat(inv._sum.totalAmount ?? 0);
+  }
+
+  const driverBreakdown = driverDeliveries
+    .map(row => {
+      const info    = driverMap[row.driverId];
+      const bottles = row._sum.filledBottlesDelivered ?? 0;
+      const revenue = driverRevMap[row.driverId]       ?? 0;
+      return {
+        driverId:         row.driverId,
+        driverName:       info?.user?.name ?? 'Unknown',
+        route:            info?.route      ?? '—',
+        totalClients:     info?.clients?.length ?? 0,
+        deliveryCount:    row._count.id,
+        bottlesDelivered: bottles,
+        revenue,
+        collectionRate:   totalBottles > 0 ? Math.round((bottles / totalBottles) * 100) : 0,
+      };
+    })
+    .sort((a, b) => b.bottlesDelivered - a.bottlesDelivered);
+
+  // Most active driver (by bottles)
+  const mostActiveDriver = driverBreakdown[0] ?? null;
+
+  // ── Client breakdown ─────────────────────────────────────────────────────
+  const clientDeliveries = await prisma.delivery.groupBy({
+    by:    ['clientId'],
+    where: deliveryWhere,
+    _sum:  { filledBottlesDelivered: true },
+    _count: { id: true },
+  });
+
+  const clientIds = clientDeliveries.map(c => c.clientId);
+  const clientInfos = await prisma.client.findMany({
+    where:  { id: { in: clientIds } },
+    select: {
+      id:             true,
+      name:           true,
+      route:          true,
+      assignedDriver: { select: { route: true, user: { select: { name: true } } } },
+    },
+  });
+  const clientMap = Object.fromEntries(clientInfos.map(c => [c.id, c]));
+
+  // Invoice totals per client in period
+  const clientInvoices = await prisma.invoice.groupBy({
+    by:    ['clientId'],
+    where: invoiceWhere,
+    _sum:  { totalAmount: true },
+    _count: { id: true },
+  });
+  const clientPaidInvoices = await prisma.invoice.groupBy({
+    by:    ['clientId'],
+    where: { ...invoiceWhere, isPaid: true },
+    _sum:  { totalAmount: true },
+    _count: { id: true },
+  });
+  const clientInvMap     = Object.fromEntries(clientInvoices.map(r => [r.clientId, r]));
+  const clientPaidInvMap = Object.fromEntries(clientPaidInvoices.map(r => [r.clientId, r]));
+
+  const clientBreakdown = clientDeliveries
+    .map(row => {
+      const info         = clientMap[row.clientId];
+      const invTotal     = parseFloat(clientInvMap[row.clientId]?._sum?.totalAmount     ?? 0);
+      const paidTotal    = parseFloat(clientPaidInvMap[row.clientId]?._sum?.totalAmount ?? 0);
+      const invCount     = clientInvMap[row.clientId]?._count?.id     ?? 0;
+      const paidCount    = clientPaidInvMap[row.clientId]?._count?.id ?? 0;
+      const outstanding  = invTotal - paidTotal;
+      return {
+        clientId:      row.clientId,
+        clientName:    info?.name ?? 'Unknown',
+        route:         info?.route ?? '—',
+        driverName:    info?.assignedDriver?.user?.name ?? '—',
+        deliveryCount: row._count.id,
+        totalBottles:  row._sum.filledBottlesDelivered ?? 0,
+        totalBilled:   invTotal,
+        totalPaid:     paidTotal,
+        outstanding,
+        invoiceCount:  invCount,
+        paidCount,
+        hasUnpaid:     outstanding > 0,
+      };
+    })
+    .sort((a, b) => b.totalBottles - a.totalBottles);
+
+  // Highest value client
+  const highestValueClient = [...clientBreakdown].sort((a, b) => b.totalBilled - a.totalBilled)[0] ?? null;
+
+  // ── Monthly trend (last 6 calendar months ending at `end`) ───────────────
+  const monthlyTrend = [];
+  for (let i = 5; i >= 0; i--) {
+    const mStart = new Date(end.getFullYear(), end.getMonth() - i, 1);
+    const mEnd   = new Date(end.getFullYear(), end.getMonth() - i + 1, 0, 23, 59, 59, 999);
+
+    const [mDeliveries, mBottles, mRevenue, mClients] = await Promise.all([
+      prisma.delivery.count({
+        where: { deliveryDate: { gte: mStart, lte: mEnd }, status: 'COMPLETED' },
+      }),
+      prisma.delivery.aggregate({
+        where: { deliveryDate: { gte: mStart, lte: mEnd }, status: 'COMPLETED' },
+        _sum:  { filledBottlesDelivered: true },
+      }),
+      prisma.invoice.aggregate({
+        where: { createdAt: { gte: mStart, lte: mEnd }, isPaid: true },
+        _sum:  { totalAmount: true },
+      }),
+      prisma.delivery.findMany({
+        where:  { deliveryDate: { gte: mStart, lte: mEnd }, status: 'COMPLETED' },
+        select: { clientId: true },
+        distinct: ['clientId'],
+      }).then(r => r.length),
+    ]);
+
+    monthlyTrend.push({
+      month:        mStart.getMonth() + 1,
+      year:         mStart.getFullYear(),
+      deliveries:   mDeliveries,
+      bottles:      mBottles._sum.filledBottlesDelivered ?? 0,
+      revenue:      parseFloat(mRevenue._sum.totalAmount ?? 0),
+      clientsServed: mClients,
+    });
+  }
+
+  res.json({
+    period: { from: start.toISOString(), to: end.toISOString() },
+    summary: {
+      totalDeliveries,
+      totalBottles,
+      totalRevenue,
+      paidRevenue,
+      outstanding:    totalRevenue - paidRevenue,
+      totalInvoices,
+      paidInvoices,
+      clientsServed:  clientCount,
+      collectionRate: totalInvoices > 0 ? Math.round((paidInvoices / totalInvoices) * 100) : 0,
+    },
+    mostActiveDriver,
+    highestValueClient,
+    driverBreakdown,
+    clientBreakdown,
+    monthlyTrend,
+  });
+}
+
+module.exports = { getSummary };
