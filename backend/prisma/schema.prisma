@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -69,7 +69,7 @@ model Client {
   name             String
   mobile           String
   email            String?
-  address          String
+  address          String   @db.Text
   assignedDriverId String
   route            String
   tempoNumber      String
@@ -92,7 +92,7 @@ model Delivery {
   filledBottlesDelivered Int
   emptyBottlesCollected  Int
   status                 DeliveryStatus @default(PENDING)
-  notes                  String?
+  notes                  String?        @db.Text
   createdAt              DateTime       @default(now())
 
   client  Client   @relation(fields: [clientId], references: [id])
@@ -113,7 +113,7 @@ model MonthlyBill {
   status                BillStatus @default(DRAFT)
   whatsappSentAt        DateTime?
   paidAt                DateTime?
-  pdfPath               String?
+  pdfPath               String?    @db.Text
   createdAt             DateTime   @default(now())
   updatedAt             DateTime   @updatedAt
 
@@ -132,7 +132,7 @@ model Invoice {
   totalAmount               Decimal   @db.Decimal(10, 2)
   isPaid                    Boolean   @default(false)
   paidAt                    DateTime?
-  paymentQrData             String?
+  paymentQrData             String?   @db.Text
   createdAt                 DateTime  @default(now())
 
   client   Client   @relation(fields: [clientId], references: [id])
@@ -155,7 +155,7 @@ model InventoryLog {
   filledBalanceAfter Int
   emptyBalanceAfter  Int
   referenceId        String?
-  note               String?
+  note               String?          @db.Text
   createdBy          String
   createdAt          DateTime         @default(now())
 }

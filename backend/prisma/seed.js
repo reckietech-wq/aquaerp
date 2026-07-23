@@ -77,17 +77,18 @@ async function main() {
   console.log('🗑️  Cleared existing data');
 
   // ── 2. Admin user ───────────────────────────────────────────────────────────
-  const adminHash = await bcrypt.hash('admin123', 10);
+  const adminHash = await bcrypt.hash('Gajanan@123', 10);
   await prisma.user.create({
     data: {
       name: 'Admin',
+      email: 'admin@gajananaqua.com',
       mobile: '0000000000',
       role: 'ADMIN',
-      loginId: 'admin',
+      loginId: 'admin@gajananaqua.com',
       passwordHash: adminHash,
     },
   });
-  console.log('👤 Admin user created (admin / admin123)');
+  console.log('👤 Admin user created (admin@gajananaqua.com / Gajanan@123)');
 
   // ── 3. Drivers ──────────────────────────────────────────────────────────────
   const driverPassword = await bcrypt.hash('driver123', 10);
@@ -217,7 +218,7 @@ async function main() {
 
   console.log('');
   console.log('✅ Seed complete: 5 drivers, 20 clients, ~' + totalDeliveries + ' deliveries, ' + invoiceCount + ' invoices');
-  console.log('   Admin login  → admin / admin123');
+  console.log('   Admin login  → admin@gajananaqua.com / Gajanan@123');
   console.log('   Driver login → driver1–driver5 / driver123');
 }
 

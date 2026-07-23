@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: aquaerp_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: watererp
+      MYSQL_USER: aquaerpuser
+      MYSQL_PASSWORD: n0xvmFFkUdK4PbKf2Agq
+    ports:
+      - "3306:3306"
+    volumes:
+      - aquaerp_mysqldata:/var/lib/mysql
+
+volumes:
+  aquaerp_mysqldata:
