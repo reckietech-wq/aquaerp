@@ -1,9 +1,9 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Truck, Users, MapPin, Phone } from 'lucide-react';
+import { Plus, Search, Truck, Users, MapPin, Phone, KeyRound } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../lib/api';
-import EditDriverModal from '../../components/EditDriverModal';
+import DriverCredentialsModal from '../../components/DriverCredentialsModal';
 
 function RouteBadge({ route }) {
   return (
@@ -22,13 +22,10 @@ function StatusDot({ isActive }) {
   );
 }
 
-function DriverCard({ driver, onEdit, onToggle, toggling }) {
+function DriverCard({ driver, onManage, onToggle, toggling }) {
   const { user, vehicleNumber, vehicleType, route, isActive, _count } = driver;
   return (
-    <div
-      className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 flex flex-col gap-4 cursor-pointer hover:shadow-md hover:border-blue-200 transition-all"
-      onClick={() => onEdit(driver)}
-    >
+    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 flex flex-col gap-4 hover:shadow-md hover:border-blue-200 transition-all">
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-3 min-w-0">
@@ -60,6 +57,9 @@ function DriverCard({ driver, onEdit, onToggle, toggling }) {
         </div>
       </div>
 
+      {/* Login ID */}
+      <p className="text-xs text-slate-400 font-mono -mt-2">Login ID: {user.loginId}</p>
+
       {/* Footer */}
       <div className="flex items-center justify-between pt-1 border-t border-slate-100">
         <RouteBadge route={route} />
@@ -67,10 +67,20 @@ function DriverCard({ driver, onEdit, onToggle, toggling }) {
           <Users size={12} />
           <span>{_count?.clients ?? 0} clients</span>
         </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-2">
         <button
-          onClick={(e) => { e.stopPropagation(); onToggle(driver); }}
+          onClick={() => onManage(driver)}
+          className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg font-medium border border-blue-200 text-blue-700 hover:bg-blue-50 transition-colors"
+        >
+          <KeyRound size={12} /> Manage
+        </button>
+        <button
+          onClick={() => onToggle(driver)}
           disabled={toggling === driver.id}
-          className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors disabled:opacity-50 ${
+          className={`text-xs px-2.5 py-1.5 rounded-lg font-medium transition-colors disabled:opacity-50 ${
             isActive
               ? 'bg-red-50 text-red-600 hover:bg-red-100'
               : 'bg-green-50 text-green-600 hover:bg-green-100'
@@ -108,7 +118,7 @@ export default function DriversPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [toggling, setToggling] = useState(null);
-  const [editDriver, setEditDriver] = useState(null);
+  const [manageDriver, setManageDriver] = useState(null);
 
   async function fetchDrivers() {
     try {
@@ -198,7 +208,7 @@ export default function DriversPage() {
             <DriverCard
               key={d.id}
               driver={d}
-              onEdit={setEditDriver}
+              onManage={setManageDriver}
               onToggle={handleToggle}
               toggling={toggling}
             />
@@ -206,12 +216,12 @@ export default function DriversPage() {
         </div>
       )}
 
-      {/* Edit modal */}
-      {editDriver && (
-        <EditDriverModal
-          driver={editDriver}
-          onClose={() => setEditDriver(null)}
-          onSaved={() => { setEditDriver(null); fetchDrivers(); }}
+      {/* Manage modal */}
+      {manageDriver && (
+        <DriverCredentialsModal
+          driver={manageDriver}
+          onClose={() => setManageDriver(null)}
+          onSaved={() => { setManageDriver(null); fetchDrivers(); }}
         />
       )}
     </div>

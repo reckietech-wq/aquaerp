@@ -126,4 +126,85 @@ async function resetPassword(req, res) {
   res.json({ success: true, message: 'Password updated' });
 }
 
-module.exports = { createDriver, listDrivers, getDriver, updateDriver, deleteDriver, resetPassword };
+async function getDriverWithCredentials(req, res) {
+  const driver = await prisma.driver.findUnique({
+    where: { id: req.params.id },
+    include: {
+      user: { select: { id: true, loginId: true, name: true, email: true, mobile: true } },
+    },
+  });
+  if (!driver) return res.status(404).json({ error: 'Driver not found' });
+
+  res.json({
+    id: driver.id,
+    name: driver.user.name,
+    mobile: driver.user.mobile,
+    vehicleNumber: driver.vehicleNumber,
+    vehicleType: driver.vehicleType,
+    route: driver.route,
+    isActive: driver.isActive,
+    user: driver.user,
+  });
+}
+
+async function updateDriverCredentials(req, res) {
+  const { name, mobile, vehicleNumber, vehicleType, route, isActive, loginId, newPassword } = req.body;
+
+  const driver = await prisma.driver.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, userId: true },
+  });
+  if (!driver) return res.status(404).json({ error: 'Driver not found' });
+
+  if (loginId) {
+    const existing = await prisma.user.findUnique({ where: { loginId } });
+    if (existing && existing.id !== driver.userId) {
+      return res.status(409).json({ error: 'loginId already taken' });
+    }
+  }
+
+  let passwordHash;
+  if (newPassword) {
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    passwordHash = await bcrypt.hash(newPassword, 10);
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: driver.userId },
+      data: {
+        ...(name && { name }),
+        ...(mobile && { mobile }),
+        ...(loginId && { loginId }),
+        ...(passwordHash && { passwordHash }),
+      },
+    });
+    return tx.driver.update({
+      where: { id: driver.id },
+      data: {
+        ...(vehicleNumber && { vehicleNumber }),
+        ...(vehicleType && { vehicleType }),
+        ...(route && { route }),
+        ...(typeof isActive === 'boolean' && { isActive }),
+      },
+      include: {
+        user: { select: { id: true, loginId: true, name: true, email: true, mobile: true } },
+      },
+    });
+  });
+
+  res.json(updated);
+}
+
+module.exports = {
+  createDriver,
+  listDrivers,
+  getDriver,
+  updateDriver,
+  deleteDriver,
+  resetPassword,
+  getDriverWithCredentials,
+  updateDriverCredentials,
+};
