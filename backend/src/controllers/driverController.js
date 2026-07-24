@@ -101,4 +101,29 @@ async function deleteDriver(req, res) {
   res.json({ message: 'Driver deactivated' });
 }
 
-module.exports = { createDriver, listDrivers, getDriver, updateDriver, deleteDriver };
+async function resetPassword(req, res) {
+  const { newPassword, confirmPassword } = req.body;
+
+  if (!newPassword || !confirmPassword) {
+    return res.status(400).json({ error: 'newPassword and confirmPassword are required' });
+  }
+  if (newPassword !== confirmPassword) {
+    return res.status(400).json({ error: 'Passwords do not match' });
+  }
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+
+  const driver = await prisma.driver.findUnique({ where: { id: req.params.id } });
+  if (!driver) return res.status(404).json({ error: 'Driver not found' });
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  await prisma.user.update({
+    where: { id: driver.userId },
+    data: { passwordHash },
+  });
+
+  res.json({ success: true, message: 'Password updated' });
+}
+
+module.exports = { createDriver, listDrivers, getDriver, updateDriver, deleteDriver, resetPassword };

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { X, AlertTriangle, MapPin, Phone, User } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { X, AlertTriangle, MapPin, Phone, User, Copy, CheckCircle2, KeyRound, Pencil } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../lib/api';
 
@@ -60,11 +61,83 @@ function ConfirmDialog({ name, onConfirm, onCancel }) {
   );
 }
 
+function ResetPasswordForm({ driverId, onDone, onCancel }) {
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    if (!newPassword || !confirmPassword) {
+      toast.error('Enter and confirm the new password');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error('Passwords do not match');
+      return;
+    }
+    if (newPassword.length < 6) {
+      toast.error('Password must be at least 6 characters');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.put(`/api/drivers/${driverId}/reset-password`, { newPassword, confirmPassword });
+      toast.success('Password updated');
+      onDone();
+    } catch (err) {
+      toast.error(err.response?.data?.error ?? 'Failed to reset password');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="bg-slate-50 rounded-xl p-4 space-y-3 mt-3">
+      <Field label="New Password">
+        <Input
+          type="password"
+          placeholder="Min 6 characters"
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+        />
+      </Field>
+      <Field label="Confirm Password">
+        <Input
+          type="password"
+          placeholder="Re-enter password"
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
+        />
+      </Field>
+      <div className="flex gap-2 pt-1">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="flex-1 py-2 rounded-lg border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-white transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className="flex-1 py-2 rounded-lg bg-blue-900 hover:bg-blue-800 disabled:opacity-60 text-sm font-semibold text-white transition-colors"
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function EditDriverModal({ driver, onClose, onSaved }) {
+  const navigate = useNavigate();
   const [clients, setClients] = useState([]);
   const [loadingClients, setLoadingClients] = useState(true);
   const [showConfirm, setShowConfirm] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
+  const [copiedLoginId, setCopiedLoginId] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
 
   const {
     register,
@@ -116,6 +189,17 @@ export default function EditDriverModal({ driver, onClose, onSaved }) {
     } finally {
       setDeactivating(false);
     }
+  }
+
+  async function copyLoginId() {
+    await navigator.clipboard.writeText(driver.user.loginId);
+    setCopiedLoginId(true);
+    setTimeout(() => setCopiedLoginId(false), 2000);
+  }
+
+  function handleEditClient(clientId) {
+    onClose();
+    navigate(`/admin/clients?edit=${clientId}`);
   }
 
   return (
@@ -234,6 +318,41 @@ export default function EditDriverModal({ driver, onClose, onSaved }) {
             </div>
           </form>
 
+          {/* Login Credentials */}
+          <div className="border-t border-slate-100 px-6 py-5">
+            <h3 className="text-sm font-semibold text-slate-600 mb-3">Login Credentials</h3>
+
+            <div className="flex items-center justify-between gap-3 bg-slate-50 rounded-xl px-3.5 py-2.5">
+              <div className="min-w-0">
+                <p className="text-xs text-slate-400 mb-0.5">Login ID</p>
+                <p className="text-sm font-mono font-medium text-slate-800 truncate">{driver.user.loginId}</p>
+              </div>
+              <button
+                onClick={copyLoginId}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:bg-white transition-colors shrink-0"
+              >
+                {copiedLoginId ? <CheckCircle2 size={13} /> : <Copy size={13} />}
+                {copiedLoginId ? 'Copied!' : 'Copy Login ID'}
+              </button>
+            </div>
+
+            {!showResetPassword ? (
+              <button
+                type="button"
+                onClick={() => setShowResetPassword(true)}
+                className="mt-3 inline-flex items-center gap-2 text-sm font-medium text-blue-700 hover:text-blue-900 transition-colors"
+              >
+                <KeyRound size={15} /> Reset Password
+              </button>
+            ) : (
+              <ResetPasswordForm
+                driverId={driver.id}
+                onDone={() => setShowResetPassword(false)}
+                onCancel={() => setShowResetPassword(false)}
+              />
+            )}
+          </div>
+
           {/* Assigned clients */}
           <div className="border-t border-slate-100 px-6 py-5">
             <h3 className="text-sm font-semibold text-slate-600 mb-3">
@@ -264,10 +383,20 @@ export default function EditDriverModal({ driver, onClose, onSaved }) {
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-slate-700 truncate">{c.name}</p>
                       <p className="text-xs text-slate-400 truncate">{c.address}</p>
+                      <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
+                        <Phone size={9} /> {c.mobile}
+                      </p>
                     </div>
                     <span className="text-xs text-slate-400 flex items-center gap-1 shrink-0">
                       <MapPin size={10} /> {c.route}
                     </span>
+                    <button
+                      onClick={() => handleEditClient(c.id)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-blue-700 hover:bg-blue-100 transition-colors shrink-0"
+                      title="Edit client"
+                    >
+                      <Pencil size={13} />
+                    </button>
                   </li>
                 ))}
               </ul>

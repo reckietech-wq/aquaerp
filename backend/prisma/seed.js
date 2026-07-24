@@ -42,6 +42,39 @@ const CLIENT_DEFS = [
   { name: 'Pallavi Shinde',   mobile: '9811005004', email: null,               address: '46, Warje, Pune',         driverIdx: 4 },
 ];
 
+const ADDITIONAL_CLIENT_DEFS = [
+  // Driver 1 (Rajesh Kumar)
+  { name: 'Vikram Mehta',     mobile: '9822001001', email: null, address: '15, Aundh Road, Pune',   driverIdx: 0 },
+  { name: 'Shweta Joshi',     mobile: '9822001002', email: null, address: '28, Baner, Pune',         driverIdx: 0 },
+  { name: 'Nikhil Shah',      mobile: '9822001003', email: null, address: '41, Pashan, Pune',        driverIdx: 0 },
+  { name: 'Archana Kulkarni', mobile: '9822001004', email: null, address: '54, Sus Road, Pune',      driverIdx: 0 },
+  { name: 'Prakash Nair',     mobile: '9822001005', email: null, address: '67, Wakad, Pune',         driverIdx: 0 },
+  // Driver 2 (Sunil Patil)
+  { name: 'Geeta Sharma',     mobile: '9822002001', email: null, address: '12, Kharadi, Pune',       driverIdx: 1 },
+  { name: 'Rahul Desai',      mobile: '9822002002', email: null, address: '25, Magarpatta, Pune',    driverIdx: 1 },
+  { name: 'Anjali Rao',       mobile: '9822002003', email: null, address: '38, Hadapsar, Pune',      driverIdx: 1 },
+  { name: 'Suresh Iyer',      mobile: '9822002004', email: null, address: '51, Undri, Pune',         driverIdx: 1 },
+  { name: 'Pooja Verma',      mobile: '9822002005', email: null, address: '64, NIBM, Pune',          driverIdx: 1 },
+  // Driver 3 (Anil Sharma)
+  { name: 'Manoj Bhosale',    mobile: '9822003001', email: null, address: '19, Chinchwad, Pune',     driverIdx: 2 },
+  { name: 'Rekha Pawar',      mobile: '9822003002', email: null, address: '32, Pimpri, Pune',        driverIdx: 2 },
+  { name: 'Sandeep Gupta',    mobile: '9822003003', email: null, address: '45, Akurdi, Pune',        driverIdx: 2 },
+  { name: 'Kaveri Singh',     mobile: '9822003004', email: null, address: '58, Nigdi, Pune',         driverIdx: 2 },
+  { name: 'Ravi Chavan',      mobile: '9822003005', email: null, address: '71, Bhosari, Pune',       driverIdx: 2 },
+  // Driver 4 (Mahesh Jadhav)
+  { name: 'Smita Tiwari',     mobile: '9822004001', email: null, address: '22, Warje, Pune',         driverIdx: 3 },
+  { name: 'Dinesh Pillai',    mobile: '9822004002', email: null, address: '35, Karve Nagar, Pune',   driverIdx: 3 },
+  { name: 'Usha Nambiar',     mobile: '9822004003', email: null, address: '48, Erandwane, Pune',     driverIdx: 3 },
+  { name: 'Ketan Jain',       mobile: '9822004004', email: null, address: '61, Deccan, Pune',        driverIdx: 3 },
+  { name: 'Meera Patil',      mobile: '9822004005', email: null, address: '74, Shivajinagar, Pune',  driverIdx: 3 },
+  // Driver 5 (Vikram Singh)
+  { name: 'Ashok Kulkarni',   mobile: '9822005001', email: null, address: '17, Kothrud, Pune',       driverIdx: 4 },
+  { name: 'Priti Mehta',      mobile: '9822005002', email: null, address: '30, Bavdhan, Pune',       driverIdx: 4 },
+  { name: 'Ganpat Rao',       mobile: '9822005003', email: null, address: '43, Pirangut, Pune',      driverIdx: 4 },
+  { name: 'Sundar Joshi',     mobile: '9822005004', email: null, address: '56, Chandni Chowk, Pune', driverIdx: 4 },
+  { name: 'Lalita Shah',      mobile: '9822005005', email: null, address: '69, Paud Road, Pune',     driverIdx: 4 },
+];
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function getWorkingDaysLast30() {
@@ -119,7 +152,12 @@ async function main() {
   // ── 4. Clients ──────────────────────────────────────────────────────────────
   const clientRecords = [];
 
-  for (const c of CLIENT_DEFS) {
+  const allClientDefs = [
+    ...CLIENT_DEFS.map((c) => ({ ...c, bottleRange: [2, 5] })),
+    ...ADDITIONAL_CLIENT_DEFS.map((c) => ({ ...c, bottleRange: [2, 4] })),
+  ];
+
+  for (const c of allClientDefs) {
     const driver = driverRecords[c.driverIdx];
     const client = await prisma.client.create({
       data: {
@@ -132,7 +170,7 @@ async function main() {
         tempoNumber: driver.tempoLabel,
       },
     });
-    clientRecords.push({ ...client, driverId: driver.driverId, userId: driver.userId });
+    clientRecords.push({ ...client, driverId: driver.driverId, userId: driver.userId, bottleRange: c.bottleRange });
   }
   console.log(`👥 Created ${clientRecords.length} clients`);
 
@@ -148,7 +186,8 @@ async function main() {
     clientDeliveryStats[client.id] = { totalFilled: 0, lastDeliveryId: null };
 
     for (const date of workingDays) {
-      const filled = rand(2, 5);
+      const [minBottles, maxBottles] = client.bottleRange ?? [2, 5];
+      const filled = rand(minBottles, maxBottles);
       const empty = prevFilled; // collect what was delivered last time
 
       const delivery = await prisma.delivery.create({
@@ -217,7 +256,7 @@ async function main() {
   console.log('🍶 Bottle inventory initialised (500 filled, 120 empty)');
 
   console.log('');
-  console.log('✅ Seed complete: 5 drivers, 20 clients, ~' + totalDeliveries + ' deliveries, ' + invoiceCount + ' invoices');
+  console.log('✅ Seed complete: ' + driverRecords.length + ' drivers, ' + clientRecords.length + ' clients, ~' + totalDeliveries + ' deliveries, ' + invoiceCount + ' invoices');
   console.log('   Admin login  → admin@gajananaqua.com / Gajanan@123');
   console.log('   Driver login → driver1–driver5 / driver123');
 }

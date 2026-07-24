@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Search, Users, Pencil, MapPin, Phone } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../lib/api';
@@ -63,6 +63,7 @@ function MobileCard({ client, onEdit }) {
 
 export default function ClientsPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [clients, setClients] = useState([]);
   const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -93,6 +94,18 @@ export default function ClientsPage() {
     setLoading(true);
     fetchClients();
   }, [filterDriver, filterRoute]);
+
+  useEffect(() => {
+    const editId = searchParams.get('edit');
+    if (!editId || clients.length === 0) return;
+    const target = clients.find((c) => c.id === editId);
+    if (target) setEditClient(target);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('edit');
+      return next;
+    }, { replace: true });
+  }, [clients, searchParams]);
 
   const routes = useMemo(() => {
     const set = new Set(clients.map((c) => c.route).filter(Boolean));
