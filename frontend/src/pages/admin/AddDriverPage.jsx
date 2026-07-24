@@ -40,7 +40,7 @@ export default function AddDriverPage() {
   const [showPass, setShowPass] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [created, setCreated] = useState(null);
-  const [copied, setCopied] = useState(false);
+  const [copiedField, setCopiedField] = useState(null);
 
   const {
     register,
@@ -77,19 +77,17 @@ export default function AddDriverPage() {
         loginId: data.loginId,
         password: data.password,
       });
-      setCreated({ loginId: res.data.user.loginId, name: res.data.user.name });
+      setCreated({ loginId: res.data.user.loginId, name: res.data.user.name, password: data.password });
       toast.success(`Driver created! Login ID: ${res.data.user.loginId}`);
     } catch (err) {
       toast.error(err.response?.data?.error ?? 'Failed to create driver');
     }
   }
 
-  async function copyCredentials() {
-    await navigator.clipboard.writeText(
-      `Login ID: ${created.loginId}\nPassword: (as set)`
-    );
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  async function copyField(field, value) {
+    await navigator.clipboard.writeText(value);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(null), 2000);
   }
 
   if (created) {
@@ -111,24 +109,42 @@ export default function AddDriverPage() {
             <p className="text-slate-500 text-sm mt-1">Share these credentials with {created.name}</p>
           </div>
 
-          <div className="bg-blue-50 border border-blue-100 rounded-xl p-5 text-left space-y-3">
-            <div>
-              <p className="text-xs font-semibold text-blue-400 uppercase tracking-wide">Login ID</p>
-              <p className="text-lg font-bold text-blue-900 font-mono mt-0.5">{created.loginId}</p>
+          <div className="bg-blue-50 border border-blue-100 rounded-xl p-5 text-left space-y-4">
+            <p className="text-sm font-semibold text-blue-900">Share these credentials with the driver:</p>
+
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold text-blue-400 uppercase tracking-wide">Login ID</p>
+                <p className="text-lg font-bold text-blue-900 font-mono mt-0.5">{created.loginId}</p>
+              </div>
+              <button
+                onClick={() => copyField('loginId', created.loginId)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors shrink-0"
+              >
+                {copiedField === 'loginId' ? <CheckCircle2 size={14} /> : <Copy size={14} />}
+                {copiedField === 'loginId' ? 'Copied!' : 'Copy'}
+              </button>
             </div>
-            <div>
-              <p className="text-xs font-semibold text-blue-400 uppercase tracking-wide">Password</p>
-              <p className="text-sm text-blue-700 mt-0.5">(as set during creation)</p>
+
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold text-blue-400 uppercase tracking-wide">Password</p>
+                <p className="text-lg font-bold text-blue-900 font-mono mt-0.5">{created.password}</p>
+              </div>
+              <button
+                onClick={() => copyField('password', created.password)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors shrink-0"
+              >
+                {copiedField === 'password' ? <CheckCircle2 size={14} /> : <Copy size={14} />}
+                {copiedField === 'password' ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+
+            <div className="pt-2 border-t border-blue-100">
+              <p className="text-xs font-semibold text-blue-400 uppercase tracking-wide">App</p>
+              <p className="text-sm text-blue-800 mt-0.5">AquaERP Driver App</p>
             </div>
           </div>
-
-          <button
-            onClick={copyCredentials}
-            className="inline-flex items-center gap-2 text-sm font-medium text-blue-700 hover:text-blue-900 transition-colors"
-          >
-            {copied ? <CheckCircle2 size={15} /> : <Copy size={15} />}
-            {copied ? 'Copied!' : 'Copy credentials'}
-          </button>
 
           <div className="flex gap-3 pt-2">
             <button
