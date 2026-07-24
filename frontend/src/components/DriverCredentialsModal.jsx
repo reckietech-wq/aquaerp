@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { X, Copy, CheckCircle2, Eye, EyeOff, MapPin, Phone, Smartphone } from 'lucide-react';
+import { X, Copy, CheckCircle2, Eye, EyeOff, Smartphone } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../lib/api';
 
@@ -53,13 +53,10 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
   const confirmPasswordValue = watch('confirmPassword', '');
 
   useEffect(() => {
-    Promise.all([
-      api.get(`/api/drivers/${driver.id}/credentials`),
-      api.get(`/api/drivers/${driver.id}`),
-    ])
-      .then(([credRes, detailRes]) => {
+    api.get(`/api/drivers/${driver.id}/credentials`)
+      .then((credRes) => {
         setData(credRes.data);
-        setClients(detailRes.data.clients ?? []);
+        setClients(credRes.data.clients ?? []);
         setIsActive(credRes.data.isActive);
         reset({
           name: credRes.data.name,
@@ -328,7 +325,7 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
                     <button
                       type="button"
                       onClick={() => setShowCurrentPassword((s) => !s)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
                     >
                       {showCurrentPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
@@ -355,7 +352,7 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
                           <button
                             type="button"
                             onClick={() => setShowNewPass((s) => !s)}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
                           >
                             {showNewPass ? <EyeOff size={16} /> : <Eye size={16} />}
                           </button>
@@ -380,7 +377,7 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
                           <button
                             type="button"
                             onClick={() => setShowConfirmPass((s) => !s)}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
                           >
                             {showConfirmPass ? <EyeOff size={16} /> : <Eye size={16} />}
                           </button>
@@ -454,33 +451,29 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
             </div>
 
             {/* Assigned Clients */}
-            <div className="border-t border-slate-100 px-6 py-5">
-              <h3 className="text-sm font-semibold text-slate-600 mb-3">
-                Assigned Clients
-                <span className="ml-2 text-xs font-normal text-slate-400">({clients.length} clients assigned)</span>
+            <div className="border-t pt-4 mt-4 px-6 pb-5">
+              <h3 className="font-medium text-gray-700 mb-3">
+                Assigned Clients ({clients.length})
               </h3>
               {clients.length === 0 ? (
                 <p className="text-sm text-slate-400 italic">No clients assigned</p>
               ) : (
-                <ul className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                  {clients.map((c) => (
-                    <li key={c.id} className="flex items-center gap-3 bg-slate-50 rounded-xl px-3 py-2.5">
-                      <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center text-blue-700 text-xs font-bold shrink-0">
-                        {c.name[0].toUpperCase()}
+                <div className="max-h-48 overflow-y-auto space-y-2">
+                  {clients.map((client) => (
+                    <div
+                      key={client.id}
+                      className="flex items-center justify-between p-2 bg-gray-50 rounded-lg"
+                    >
+                      <div>
+                        <p className="font-medium text-sm">{client.name}</p>
+                        <p className="text-xs text-gray-500">{client.address}</p>
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-slate-700 truncate">{c.name}</p>
-                        <p className="text-xs text-slate-400 truncate">{c.address}</p>
-                      </div>
-                      <span className="text-xs text-slate-400 flex items-center gap-1 shrink-0">
-                        <MapPin size={10} /> {c.route}
+                      <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded-full">
+                        {client.route}
                       </span>
-                      <span className="text-xs text-slate-400 flex items-center gap-1 shrink-0">
-                        <Phone size={10} /> {c.mobile}
-                      </span>
-                    </li>
+                    </div>
                   ))}
-                </ul>
+                </div>
               )}
             </div>
 

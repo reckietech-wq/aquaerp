@@ -131,6 +131,10 @@ async function getDriverWithCredentials(req, res) {
     where: { id: req.params.id },
     include: {
       user: { select: { id: true, loginId: true, name: true, email: true, mobile: true } },
+      clients: {
+        where: { isActive: true },
+        orderBy: { name: 'asc' },
+      },
     },
   });
   if (!driver) return res.status(404).json({ error: 'Driver not found' });
@@ -144,6 +148,7 @@ async function getDriverWithCredentials(req, res) {
     route: driver.route,
     isActive: driver.isActive,
     user: driver.user,
+    clients: driver.clients,
   });
 }
 
