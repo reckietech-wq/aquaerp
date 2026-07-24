@@ -32,9 +32,11 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
   const [copiedLoginId, setCopiedLoginId] = useState(false);
   const [copiedCard, setCopiedCard] = useState(false);
   const [changePassword, setChangePassword] = useState(false);
+  const [editingLoginId, setEditingLoginId] = useState(false);
   const [showNewPass, setShowNewPass] = useState(false);
   const [showConfirmPass, setShowConfirmPass] = useState(false);
   const [isActive, setIsActive] = useState(true);
+  const [deactivating, setDeactivating] = useState(false);
 
   const {
     register,
@@ -71,6 +73,20 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
       .catch(() => toast.error('Failed to load driver credentials'))
       .finally(() => setLoading(false));
   }, [driver.id, reset]);
+
+  async function handleDeactivate() {
+    if (!confirm(`Deactivate ${driver.user.name}? They will no longer be able to log in.`)) return;
+    setDeactivating(true);
+    try {
+      await api.delete(`/api/drivers/${driver.id}`);
+      toast.success('Driver deactivated');
+      onSaved();
+    } catch (err) {
+      toast.error(err.response?.data?.error ?? 'Failed to deactivate driver');
+    } finally {
+      setDeactivating(false);
+    }
+  }
 
   async function copyText(text, setFlag) {
     await navigator.clipboard.writeText(text);
@@ -121,7 +137,7 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 z-40 bg-black/40 flex items-start justify-center overflow-y-auto py-8 px-4">
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-[680px] my-auto">
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-[780px] my-auto">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <div className="flex items-center gap-3">
@@ -204,6 +220,17 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
                     />
                   </button>
                 </div>
+
+                {isActive && (
+                  <button
+                    type="button"
+                    onClick={handleDeactivate}
+                    disabled={deactivating}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-60 transition-colors"
+                  >
+                    {deactivating ? 'Deactivating…' : 'Deactivate Driver'}
+                  </button>
+                )}
               </div>
 
               {/* RIGHT: Login Credentials */}
@@ -212,58 +239,69 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
 
                 {/* Login ID box */}
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2 bg-slate-50 rounded-xl px-3.5 py-2.5">
-                    <div className="min-w-0">
-                      <p className="text-xs text-slate-400">Current Login ID</p>
-                      <p className="text-sm font-mono font-medium text-slate-800 truncate">{data.user.loginId}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => copyText(data.user.loginId, setCopiedLoginId)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:bg-white transition-colors shrink-0"
-                    >
-                      {copiedLoginId ? <CheckCircle2 size={13} /> : <Copy size={13} />}
-                      {copiedLoginId ? 'Copied!' : 'Copy'}
-                    </button>
-                  </div>
-                  <Field label="Login ID" error={errors.loginId?.message}>
+                  <label className="block text-sm font-medium text-slate-700">Login ID</label>
+                  <div className="flex items-center gap-2">
                     <Input
+                      readOnly={!editingLoginId}
                       hasError={!!errors.loginId}
+                      className={!editingLoginId ? 'bg-slate-100 text-slate-500 cursor-default' : ''}
                       {...register('loginId', {
                         required: 'Login ID is required',
                         minLength: { value: 3, message: 'At least 3 characters' },
                         pattern: { value: /^[a-zA-Z0-9._@-]+$/, message: 'Invalid characters' },
                       })}
                     />
-                  </Field>
-                  {loginIdValue !== data.user.loginId && (
-                    <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-2.5 py-1.5">
-                      Changing Login ID will require driver to use new ID immediately
-                    </p>
+                    <button
+                      type="button"
+                      onClick={() => copyText(loginIdValue || data.user.loginId, setCopiedLoginId)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors shrink-0"
+                    >
+                      {copiedLoginId ? <CheckCircle2 size={13} /> : <Copy size={13} />}
+                    </button>
+                  </div>
+                  {errors.loginId && <p className="text-xs text-red-500">{errors.loginId.message}</p>}
+
+                  {!editingLoginId ? (
+                    <button
+                      type="button"
+                      onClick={() => setEditingLoginId(true)}
+                      className="text-xs font-medium text-blue-700 hover:text-blue-900 transition-colors"
+                    >
+                      Change Login ID
+                    </button>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-2.5 py-1.5">
+                        Driver must use new Login ID immediately
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingLoginId(false);
+                          reset((prev) => ({ ...prev, loginId: data.user.loginId }));
+                        }}
+                        className="text-xs font-medium text-slate-500 hover:text-slate-700 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
                   )}
                 </div>
 
                 {/* Password box */}
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs text-slate-400">Password</p>
-                      <p className="text-sm font-mono font-medium text-slate-800 tracking-widest">••••••••</p>
-                    </div>
+                  <label className="block text-sm font-medium text-slate-700">Password</label>
+                  <Input readOnly value="••••••••" className="bg-slate-100 text-slate-500 cursor-default tracking-widest" />
+
+                  {!changePassword ? (
                     <button
                       type="button"
-                      onClick={() => setChangePassword((v) => !v)}
-                      className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
-                        changePassword
-                          ? 'border-blue-200 bg-blue-50 text-blue-700'
-                          : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                      }`}
+                      onClick={() => setChangePassword(true)}
+                      className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-100 text-amber-800 hover:bg-amber-200 transition-colors"
                     >
-                      {changePassword ? 'Cancel Change' : 'Change Password'}
+                      Reset Password
                     </button>
-                  </div>
-
-                  {changePassword && (
+                  ) : (
                     <div className="space-y-3 bg-slate-50 rounded-xl p-3.5">
                       <Field label="New Password">
                         <div className="relative">
@@ -307,7 +345,40 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
                           </button>
                         </div>
                       </Field>
-                      <p className="text-xs text-slate-400">Leave empty to keep the current password unchanged.</p>
+                      <div className="flex items-center gap-3 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!newPasswordValue || !confirmPasswordValue) {
+                              toast.error('Enter and confirm the new password');
+                              return;
+                            }
+                            if (newPasswordValue !== confirmPasswordValue) {
+                              toast.error('Passwords do not match');
+                              return;
+                            }
+                            if (newPasswordValue.length < 6) {
+                              toast.error('Password must be at least 6 characters');
+                              return;
+                            }
+                            toast.success('Password will be updated when you save changes');
+                          }}
+                          className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white transition-colors"
+                        >
+                          Update Password
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setChangePassword(false);
+                            reset((prev) => ({ ...prev, newPassword: '', confirmPassword: '' }));
+                          }}
+                          className="text-xs font-medium text-slate-500 hover:text-slate-700 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      <p className="text-xs text-slate-400">Password change is applied when you click Save Changes below.</p>
                     </div>
                   )}
                 </div>
@@ -333,7 +404,7 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
                     <p>
                       Password:{' '}
                       <span className="font-mono font-medium">
-                        {changePassword && newPasswordValue ? newPasswordValue : '(unchanged)'}
+                        {changePassword && newPasswordValue ? newPasswordValue : '(set new to share)'}
                       </span>
                     </p>
                   </div>
