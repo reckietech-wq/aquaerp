@@ -37,6 +37,8 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
   const [showConfirmPass, setShowConfirmPass] = useState(false);
   const [isActive, setIsActive] = useState(true);
   const [deactivating, setDeactivating] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [newPasswordSaved, setNewPasswordSaved] = useState('');
 
   const {
     register,
@@ -139,6 +141,7 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
       }
 
       // Reset password fields and reflect the new loginId
+      if (passwordChanged) setNewPasswordSaved(formData.newPassword);
       setChangePassword(false);
       setEditingLoginId(false);
       setData((prev) => ({ ...prev, user: updatedDriver.user }));
@@ -315,7 +318,21 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
                 {/* Password box */}
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-slate-700">Password</label>
-                  <Input readOnly value="••••••••" className="bg-slate-100 text-slate-500 cursor-default tracking-widest" />
+                  <div className="relative">
+                    <Input
+                      type={showCurrentPassword ? 'text' : 'password'}
+                      readOnly
+                      value={newPasswordSaved || '••••••••'}
+                      className="pr-10 bg-slate-100 text-slate-500 cursor-default tracking-widest"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowCurrentPassword((s) => !s)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      {showCurrentPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
 
                   {!changePassword ? (
                     <button
