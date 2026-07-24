@@ -111,25 +111,49 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
     }
 
     const loginIdChanged = formData.loginId !== data.user.loginId;
-    const passwordChanged = changePassword && !!formData.newPassword;
+    const passwordChanged = changePassword && !!formData.newPassword && formData.newPassword.trim() !== '';
+
+    const body = {
+      name: formData.name,
+      mobile: formData.mobile,
+      vehicleNumber: formData.vehicleNumber.toUpperCase(),
+      vehicleType: formData.vehicleType,
+      route: formData.route,
+      loginId: formData.loginId,
+      isActive,
+    };
+
+    if (formData.newPassword && formData.newPassword.trim() !== '') {
+      body.newPassword = formData.newPassword;
+    }
 
     try {
-      const updated = await api.put(`/api/drivers/${driver.id}/credentials`, {
-        name: formData.name,
-        mobile: formData.mobile,
-        vehicleNumber: formData.vehicleNumber.toUpperCase(),
-        vehicleType: formData.vehicleType,
-        route: formData.route,
-        isActive,
-        loginId: formData.loginId,
-        ...(passwordChanged && { newPassword: formData.newPassword }),
-      });
+      const res = await api.put(`/api/drivers/${driver.id}/credentials`, body);
+      const updatedDriver = res.data.driver;
 
-      toast.success('Driver details updated successfully');
-      if (loginIdChanged || passwordChanged) {
+      toast.success('Changes saved successfully!');
+      if (passwordChanged) {
+        toast('Password updated. Share new credentials with driver.', { icon: '📱' });
+      } else if (loginIdChanged) {
         toast('Share new credentials with the driver', { icon: '📱' });
       }
-      onSaved(updated.data);
+
+      // Reset password fields and reflect the new loginId
+      setChangePassword(false);
+      setEditingLoginId(false);
+      setData((prev) => ({ ...prev, user: updatedDriver.user }));
+      reset({
+        name: updatedDriver.user.name,
+        mobile: updatedDriver.user.mobile,
+        vehicleNumber: updatedDriver.vehicleNumber,
+        vehicleType: updatedDriver.vehicleType,
+        route: updatedDriver.route,
+        loginId: updatedDriver.user.loginId,
+        newPassword: '',
+        confirmPassword: '',
+      });
+
+      onSaved(updatedDriver);
     } catch (err) {
       toast.error(err.response?.data?.error ?? 'Failed to update driver');
     }

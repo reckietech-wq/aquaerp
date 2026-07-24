@@ -148,54 +148,62 @@ async function getDriverWithCredentials(req, res) {
 }
 
 async function updateDriverCredentials(req, res) {
+  const driverId = req.params.id;
   const { name, mobile, vehicleNumber, vehicleType, route, isActive, loginId, newPassword } = req.body;
 
+  console.log('Updating driver credentials:', { driverId, loginId, hasNewPassword: !!newPassword });
+
   const driver = await prisma.driver.findUnique({
-    where: { id: req.params.id },
-    select: { id: true, userId: true },
+    where: { id: driverId },
+    include: { user: true },
   });
   if (!driver) return res.status(404).json({ error: 'Driver not found' });
 
-  if (loginId) {
+  if (loginId && loginId !== driver.user.loginId) {
     const existing = await prisma.user.findUnique({ where: { loginId } });
     if (existing && existing.id !== driver.userId) {
-      return res.status(409).json({ error: 'loginId already taken' });
+      return res.status(409).json({ error: 'Login ID already taken' });
     }
   }
 
-  let passwordHash;
-  if (newPassword) {
+  const userUpdate = {
+    ...(name && { name }),
+    ...(mobile && { mobile }),
+    ...(loginId && { loginId }),
+  };
+
+  if (newPassword && newPassword.trim() !== '') {
     if (newPassword.length < 6) {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
-    passwordHash = await bcrypt.hash(newPassword, 10);
+    userUpdate.passwordHash = await bcrypt.hash(newPassword, 10);
   }
 
-  const updated = await prisma.$transaction(async (tx) => {
-    await tx.user.update({
+  await prisma.$transaction([
+    prisma.user.update({
       where: { id: driver.userId },
-      data: {
-        ...(name && { name }),
-        ...(mobile && { mobile }),
-        ...(loginId && { loginId }),
-        ...(passwordHash && { passwordHash }),
-      },
-    });
-    return tx.driver.update({
-      where: { id: driver.id },
+      data: userUpdate,
+    }),
+    prisma.driver.update({
+      where: { id: driverId },
       data: {
         ...(vehicleNumber && { vehicleNumber }),
         ...(vehicleType && { vehicleType }),
         ...(route && { route }),
         ...(typeof isActive === 'boolean' && { isActive }),
       },
-      include: {
-        user: { select: { id: true, loginId: true, name: true, email: true, mobile: true } },
-      },
-    });
+    }),
+  ]);
+
+  const updated = await prisma.driver.findUnique({
+    where: { id: driverId },
+    include: {
+      user: { select: { id: true, name: true, loginId: true, mobile: true, role: true } },
+      clients: true,
+    },
   });
 
-  res.json(updated);
+  res.json({ driver: updated });
 }
 
 module.exports = {
