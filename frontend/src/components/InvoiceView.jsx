@@ -77,7 +77,6 @@ export default function InvoiceView({ invoice, onClose }) {
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Bill To</p>
           <p className="font-bold text-slate-800 text-base">{client.name}</p>
           <p className="text-slate-500 text-sm mt-0.5 leading-relaxed">{client.address}</p>
-          <p className="text-slate-500 text-sm mt-0.5">{client.mobile}</p>
         </div>
 
         {/* Line items table */}

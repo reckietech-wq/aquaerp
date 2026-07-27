@@ -244,4 +244,142 @@ async function getSummary(req, res) {
   });
 }
 
-module.exports = { getSummary };
+// ─── getClientSummary ───────────────────────────────────────────────────────
+
+async function getClientSummary(req, res) {
+  const { from, to, driverId, vehicleNumber, route, clientId } = req.query;
+
+  const { start, end } = parseRange({ from, to });
+
+  // Resolve driverId from vehicleNumber if given
+  let effectiveDriverId = driverId || undefined;
+  if (vehicleNumber && !driverId) {
+    const driverByVehicle = await prisma.driver.findFirst({ where: { vehicleNumber } });
+    effectiveDriverId = driverByVehicle?.id ?? '__none__';
+  }
+
+  const clientWhere = {
+    isActive: true,
+    ...(clientId && { id: clientId }),
+    ...(effectiveDriverId && { assignedDriverId: effectiveDriverId }),
+    ...(route && { route }),
+  };
+
+  const clients = await prisma.client.findMany({
+    where: clientWhere,
+    select: {
+      id: true,
+      name: true,
+      address: true,
+      route: true,
+      assignedDriver: {
+        select: {
+          id: true,
+          vehicleNumber: true,
+          route: true,
+          user: { select: { name: true } },
+        },
+      },
+    },
+    orderBy: { name: 'asc' },
+  });
+
+  const clientRows = await Promise.all(
+    clients.map(async (c) => {
+      const deliveryWhere = {
+        clientId: c.id,
+        deliveryDate: { gte: start, lte: end },
+        status: 'COMPLETED',
+      };
+      const invoiceWhere = { clientId: c.id, createdAt: { gte: start, lte: end } };
+
+      const [deliveries, invAgg, paidAgg, lastDelivery] = await Promise.all([
+        prisma.delivery.findMany({
+          where: deliveryWhere,
+          select: { deliveryDate: true, filledBottlesDelivered: true },
+        }),
+        prisma.invoice.aggregate({ where: invoiceWhere, _sum: { totalAmount: true } }),
+        prisma.invoice.aggregate({ where: { ...invoiceWhere, isPaid: true }, _sum: { totalAmount: true } }),
+        prisma.delivery.findFirst({
+          where: { clientId: c.id, status: 'COMPLETED' },
+          orderBy: { deliveryDate: 'desc' },
+          select: { deliveryDate: true },
+        }),
+      ]);
+
+      const totalBottles = deliveries.reduce((s, d) => s + d.filledBottlesDelivered, 0);
+      const totalBilled = parseFloat(invAgg._sum.totalAmount ?? 0);
+      const paid = parseFloat(paidAgg._sum.totalAmount ?? 0);
+      const unpaid = totalBilled - paid;
+
+      // Monthly breakdown (bottles + billed, grouped by month/year within range)
+      const monthlyMap = {};
+      for (const d of deliveries) {
+        const dt = new Date(d.deliveryDate);
+        const key = `${dt.getFullYear()}-${dt.getMonth() + 1}`;
+        if (!monthlyMap[key]) {
+          monthlyMap[key] = { year: dt.getFullYear(), month: dt.getMonth() + 1, bottles: 0, deliveries: 0 };
+        }
+        monthlyMap[key].bottles += d.filledBottlesDelivered;
+        monthlyMap[key].deliveries += 1;
+      }
+      const monthlyBreakdown = Object.values(monthlyMap).sort((a, b) => (a.year - b.year) || (a.month - b.month));
+
+      return {
+        clientId: c.id,
+        clientName: c.name,
+        address: c.address,
+        route: c.route,
+        driverName: c.assignedDriver?.user?.name ?? '—',
+        vehicleNumber: c.assignedDriver?.vehicleNumber ?? '—',
+        totalDeliveries: deliveries.length,
+        totalBottles,
+        lastDelivery: lastDelivery?.deliveryDate ?? null,
+        totalBilled,
+        paid,
+        unpaid,
+        outstanding: unpaid,
+        monthlyBreakdown,
+      };
+    })
+  );
+
+  // ── Vehicle-wise summary ────────────────────────────────────────────────
+  const vehicleMap = {};
+  for (const row of clientRows) {
+    const key = row.vehicleNumber;
+    if (!vehicleMap[key]) {
+      vehicleMap[key] = {
+        vehicleNumber: row.vehicleNumber,
+        driverName: row.driverName,
+        route: row.route,
+        totalClients: 0,
+        totalDeliveries: 0,
+        totalBottles: 0,
+        totalRevenue: 0,
+      };
+    }
+    vehicleMap[key].totalClients += 1;
+    vehicleMap[key].totalDeliveries += row.totalDeliveries;
+    vehicleMap[key].totalBottles += row.totalBottles;
+    vehicleMap[key].totalRevenue += row.totalBilled;
+  }
+  const vehicleSummary = Object.values(vehicleMap).sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+  // ── Overall summary ─────────────────────────────────────────────────────
+  const totalClients = clientRows.length;
+  const totalBottles = clientRows.reduce((s, r) => s + r.totalBottles, 0);
+  const totalRevenue = clientRows.reduce((s, r) => s + r.totalBilled, 0);
+  const totalPaid = clientRows.reduce((s, r) => s + r.paid, 0);
+  const outstanding = clientRows.reduce((s, r) => s + r.outstanding, 0);
+  const collectionRate = totalRevenue > 0 ? Math.round((totalPaid / totalRevenue) * 100) : 0;
+
+  res.json({
+    period: { from: start.toISOString(), to: end.toISOString() },
+    summary: { totalClients, totalBottles, totalRevenue, outstanding, collectionRate },
+    clients: clientRows,
+    vehicleSummary,
+  });
+}
+
+module.exports = { getSummary, getClientSummary };

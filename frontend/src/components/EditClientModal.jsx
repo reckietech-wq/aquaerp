@@ -4,6 +4,11 @@ import { X, AlertTriangle, PackageCheck, MapPin } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../lib/api';
 
+const routeOptions = [
+  'Route 1', 'Route 2', 'Route 3', 'Route 4', 'Route 5',
+  'Route 6', 'Route 7', 'Route 8', 'Route 9', 'Route 10',
+];
+
 function Field({ label, required, error, children }) {
   return (
     <div className="space-y-1">
@@ -119,7 +124,10 @@ export default function EditClientModal({ client, drivers, onClose, onSaved }) {
   useEffect(() => {
     if (!selectedDriverId || selectedDriverId === client.assignedDriverId) return;
     const driver = activeDrivers.find((d) => d.id === selectedDriverId);
-    if (driver) setValue('route', driver.route);
+    if (driver) {
+      const driverRoute = routeOptions.includes(driver.route) ? driver.route : `Route ${driver.route}`;
+      setValue('route', driverRoute);
+    }
   }, [selectedDriverId]);
 
   async function onSubmit(data) {
@@ -243,10 +251,17 @@ export default function EditClientModal({ client, drivers, onClose, onSaved }) {
                 </select>
               </Field>
               <Field label="Route" required error={errors.route?.message}>
-                <Input
-                  hasError={!!errors.route}
+                <select
                   {...register('route', { required: 'Required' })}
-                />
+                  className={`w-full px-3.5 py-2.5 text-sm border rounded-xl text-slate-800
+                    focus:outline-none focus:ring-2 focus:ring-blue-900 bg-white transition
+                    ${errors.route ? 'border-red-300' : 'border-slate-200'}`}
+                >
+                  <option value="">Select Route</option>
+                  {routeOptions.map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
               </Field>
               <Field label="Tempo Number" required error={errors.tempoNumber?.message}>
                 <Input

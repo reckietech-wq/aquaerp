@@ -43,15 +43,9 @@ async function generateMonthlyInvoicePDF(billId) {
     include: {
       client: {
         select: {
-          id:             true,
-          name:           true,
-          mobile:         true,
-          address:        true,
-          route:          true,
-          tempoNumber:    true,
-          assignedDriver: {
-            select: { route: true, user: { select: { name: true } } },
-          },
+          id:      true,
+          name:    true,
+          address: true,
         },
       },
     },
@@ -131,16 +125,13 @@ async function generateMonthlyInvoicePDF(billId) {
 
     // ── CLIENT INFO BOX ───────────────────────────────────────────────────────
     const infoY = 110;
-    doc.rect(50, infoY, 240, 100).fill(BRAND_LIGHT).stroke('#c7d2fe');
+    doc.rect(50, infoY, 240, 60).fill(BRAND_LIGHT).stroke('#c7d2fe');
     doc.fillColor(GRAY).fontSize(7).font('Helvetica-Bold')
        .text('BILL TO', 62, infoY + 10);
     doc.fillColor(DARK).fontSize(11).font('Helvetica-Bold')
        .text(client.name, 62, infoY + 22);
     doc.fillColor(GRAY).fontSize(8).font('Helvetica')
-       .text(client.address, 62, infoY + 38, { width: 216 })
-       .text(`Mobile: ${client.mobile}`, 62, infoY + 64)
-       .text(`Route: ${client.route}`, 62, infoY + 76)
-       .text(`Driver: ${client.assignedDriver?.user?.name ?? '—'}`, 62, infoY + 88);
+       .text(client.address, 62, infoY + 38, { width: 216 });
 
     // Bill period box (right of client info)
     const periodX = W - 240;

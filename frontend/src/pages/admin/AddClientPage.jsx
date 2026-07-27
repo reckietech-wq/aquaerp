@@ -5,6 +5,11 @@ import { ArrowLeft, CheckCircle2, Users } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../lib/api';
 
+const routeOptions = [
+  'Route 1', 'Route 2', 'Route 3', 'Route 4', 'Route 5',
+  'Route 6', 'Route 7', 'Route 8', 'Route 9', 'Route 10',
+];
+
 function Field({ label, required, error, children }) {
   return (
     <div className="space-y-1">
@@ -57,7 +62,10 @@ export default function AddClientPage() {
   useEffect(() => {
     if (!selectedDriverId) return;
     const driver = drivers.find((d) => d.id === selectedDriverId);
-    if (driver) setValue('route', driver.route, { shouldValidate: false });
+    if (driver) {
+      const driverRoute = routeOptions.includes(driver.route) ? driver.route : `Route ${driver.route}`;
+      setValue('route', driverRoute, { shouldValidate: false });
+    }
   }, [selectedDriverId, drivers, setValue]);
 
   async function onSubmit(data) {
@@ -221,11 +229,17 @@ export default function AddClientPage() {
             </Field>
 
             <Field label="Route" required error={errors.route?.message}>
-              <Input
-                hasError={!!errors.route}
-                placeholder="Auto-filled from driver, can override"
+              <select
                 {...register('route', { required: 'Route is required' })}
-              />
+                className={`w-full px-3.5 py-2.5 text-sm border rounded-xl text-slate-800
+                  focus:outline-none focus:ring-2 focus:ring-blue-900 focus:border-transparent bg-white transition
+                  ${errors.route ? 'border-red-300 bg-red-50' : 'border-slate-200'}`}
+              >
+                <option value="">Select Route</option>
+                {routeOptions.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
             </Field>
 
             <Field label="Tempo Number" required error={errors.tempoNumber?.message}>

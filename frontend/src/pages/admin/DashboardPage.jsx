@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Users,
   Truck,
@@ -7,6 +7,7 @@ import {
   ReceiptText,
   IndianRupee,
   Package,
+  Search,
 } from 'lucide-react';
 import api from '../../lib/api';
 
@@ -106,10 +107,20 @@ export default function DashboardPage() {
   const [loadingStats, setLoadingStats]           = useState(true);
   const [loadingDeliveries, setLoadingDeliveries] = useState(true);
 
+  const [filter, setFilter] = useState('today');
+  const [clientSearch, setClientSearch] = useState('');
+  const [clientResults, setClientResults] = useState([]);
+  const [selectedClient, setSelectedClient] = useState(null);
+  const searchDebounce = useRef(null);
+
+  const query = selectedClient
+    ? `?clientId=${selectedClient.id}`
+    : `?filter=${filter}`;
+
   const fetchStats = useCallback(async () => {
     try {
       const [statsRes, invRes] = await Promise.all([
-        api.get('/api/dashboard/stats'),
+        api.get(`/api/dashboard/stats${query}`),
         api.get('/api/inventory'),
       ]);
       setStats(statsRes.data);
@@ -119,20 +130,22 @@ export default function DashboardPage() {
     } finally {
       setLoadingStats(false);
     }
-  }, []);
+  }, [query]);
 
   const fetchDeliveries = useCallback(async () => {
     try {
-      const res = await api.get('/api/dashboard/recent-deliveries');
+      const res = await api.get(`/api/dashboard/recent-deliveries${query}`);
       setDeliveries(res.data);
     } catch {
       // silently keep stale data
     } finally {
       setLoadingDeliveries(false);
     }
-  }, []);
+  }, [query]);
 
   useEffect(() => {
+    setLoadingStats(true);
+    setLoadingDeliveries(true);
     fetchStats();
     fetchDeliveries();
 
@@ -143,6 +156,37 @@ export default function DashboardPage() {
 
     return () => clearInterval(interval);
   }, [fetchStats, fetchDeliveries]);
+
+  function handleFilterClick(next) {
+    setFilter(next);
+    setSelectedClient(null);
+    setClientSearch('');
+    setClientResults([]);
+  }
+
+  function handleClientSearchChange(value) {
+    setClientSearch(value);
+    setSelectedClient(null);
+    if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    if (!value.trim()) {
+      setClientResults([]);
+      return;
+    }
+    searchDebounce.current = setTimeout(async () => {
+      try {
+        const res = await api.get(`/api/clients?search=${encodeURIComponent(value.trim())}`);
+        setClientResults(res.data.slice(0, 8));
+      } catch {
+        setClientResults([]);
+      }
+    }, 300);
+  }
+
+  function handleSelectClient(client) {
+    setSelectedClient(client);
+    setClientSearch(client.name);
+    setClientResults([]);
+  }
 
   const filledBottles = inventory?.totalFilledBottles ?? 0;
   const emptyBottles  = inventory?.totalEmptyBottles  ?? 0;
@@ -168,6 +212,60 @@ export default function DashboardPage() {
       <div>
         <h1 className="text-2xl font-bold text-slate-800">Dashboard</h1>
         <p className="text-slate-500 text-sm mt-0.5">Live overview · refreshes every 60 s</p>
+      </div>
+
+      {/* Filter bar */}
+      <div className="flex flex-wrap gap-2 mb-6">
+        <button
+          className={`px-3.5 py-2 rounded-xl text-sm font-medium transition-colors ${
+            !selectedClient && filter === 'today' ? 'bg-blue-900 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+          }`}
+          onClick={() => handleFilterClick('today')}
+        >
+          Today
+        </button>
+        <button
+          className={`px-3.5 py-2 rounded-xl text-sm font-medium transition-colors ${
+            !selectedClient && filter === 'month' ? 'bg-blue-900 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+          }`}
+          onClick={() => handleFilterClick('month')}
+        >
+          This Month
+        </button>
+        <button
+          className={`px-3.5 py-2 rounded-xl text-sm font-medium transition-colors ${
+            !selectedClient && filter === 'year' ? 'bg-blue-900 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+          }`}
+          onClick={() => handleFilterClick('year')}
+        >
+          This Year
+        </button>
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Search client name/ID…"
+            value={clientSearch}
+            onChange={(e) => handleClientSearchChange(e.target.value)}
+            className={`pl-8 pr-3 py-2 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-900 transition-colors ${
+              selectedClient ? 'bg-blue-900 text-white placeholder-blue-200 border border-blue-900' : 'bg-white border border-slate-200 text-slate-700'
+            }`}
+          />
+          {clientResults.length > 0 && (
+            <div className="absolute z-20 mt-1 w-64 bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden">
+              {clientResults.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => handleSelectClient(c)}
+                  className="w-full text-left px-3.5 py-2 text-sm hover:bg-slate-50 transition-colors"
+                >
+                  <p className="font-medium text-slate-800">{c.name}</p>
+                  <p className="text-xs text-slate-400">{c.mobile}</p>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Stat cards */}
