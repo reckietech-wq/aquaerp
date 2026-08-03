@@ -55,7 +55,7 @@ async function getDriver(req, res) {
 }
 
 async function updateDriver(req, res) {
-  const { name, mobile, vehicleNumber, vehicleType, route } = req.body;
+  const { name, mobile, vehicleNumber, vehicleType, route, isActive } = req.body;
 
   const driver = await prisma.driver.findUnique({
     where: { id: req.params.id },
@@ -79,6 +79,7 @@ async function updateDriver(req, res) {
         ...(vehicleNumber && { vehicleNumber }),
         ...(vehicleType && { vehicleType }),
         ...(route && { route }),
+        ...(typeof isActive === 'boolean' && { isActive }),
       },
       include: {
         user: { select: { id: true, name: true, mobile: true, loginId: true, role: true } },

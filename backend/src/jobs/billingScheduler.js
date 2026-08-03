@@ -20,7 +20,7 @@ async function runBillingJob() {
 
   const clients = await prisma.client.findMany({
     where:  { isActive: true },
-    select: { id: true },
+    select: { id: true, ratePerBottle: true },
   });
 
   let generated = 0;
@@ -43,12 +43,7 @@ async function runBillingJob() {
     const totalBottles = deliveries.reduce((s, d) => s + d.filledBottlesDelivered, 0);
     const totalEmpty   = deliveries.reduce((s, d) => s + d.emptyBottlesCollected,  0);
 
-    const lastInvoice = await prisma.invoice.findFirst({
-      where:   { clientId: client.id },
-      orderBy: { createdAt: 'desc' },
-      select:  { amountPerBottle: true },
-    });
-    const rate        = lastInvoice ? parseFloat(lastInvoice.amountPerBottle) : 0;
+    const rate        = client.ratePerBottle != null ? parseFloat(client.ratePerBottle) : 50;
     const totalAmount = totalBottles * rate;
 
     await prisma.monthlyBill.upsert({

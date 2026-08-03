@@ -18,7 +18,7 @@ function monthRange(month, year) {
 // ─── generateMonthlyBills ─────────────────────────────────────────────────────
 
 async function generateMonthlyBills(req, res) {
-  let { month, year, ratePerBottle } = req.body ?? {};
+  let { month, year } = req.body ?? {};
 
   if (!month || !year) {
     const prev = prevMonth();
@@ -35,7 +35,7 @@ async function generateMonthlyBills(req, res) {
 
   const clients = await prisma.client.findMany({
     where: { isActive: true },
-    select: { id: true, assignedDriverId: true },
+    select: { id: true, assignedDriverId: true, ratePerBottle: true },
   });
 
   let generated = 0;
@@ -57,16 +57,9 @@ async function generateMonthlyBills(req, res) {
     const totalBottles  = deliveries.reduce((s, d) => s + d.filledBottlesDelivered, 0);
     const totalEmpty    = deliveries.reduce((s, d) => s + d.emptyBottlesCollected,  0);
 
-    // Resolve rate: body param → last invoice for this client → default 0
-    let rate = ratePerBottle ? parseFloat(ratePerBottle) : null;
-    if (!rate) {
-      const lastInvoice = await prisma.invoice.findFirst({
-        where:   { clientId: client.id },
-        orderBy: { createdAt: 'desc' },
-        select:  { amountPerBottle: true },
-      });
-      rate = lastInvoice ? parseFloat(lastInvoice.amountPerBottle) : 0;
-    }
+    // Rate is always sourced from the client's configured rate, falling back
+    // to 50 only if the client has no rate set.
+    const rate = client.ratePerBottle != null ? parseFloat(client.ratePerBottle) : 50;
 
     const totalAmount = totalBottles * rate;
 
@@ -115,7 +108,7 @@ async function getMonthlyBills(req, res) {
     where.client = {
       ...where.client,
       OR: [
-        { name:   { contains: search, mode: 'insensitive' } },
+        { name:   { contains: search } },
         { mobile: { contains: search } },
       ],
     };

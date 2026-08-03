@@ -14,6 +14,20 @@ async function createDelivery(req, res) {
   const client = await prisma.client.findUnique({ where: { id: clientId } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
 
+  // Resolve driverId: drivers use their own profile, admins use the client's assigned driver
+  let driverId;
+  if (req.user.role === 'DRIVER') {
+    const driverProfile = await prisma.driver.findUnique({ where: { userId: req.user.id } });
+    if (!driverProfile) return res.status(404).json({ error: 'Driver profile not found' });
+    if (!driverProfile.isActive) return res.status(401).json({ error: 'Account deactivated' });
+    if (client.assignedDriverId !== driverProfile.id) {
+      return res.status(403).json({ error: 'This client is not assigned to you' });
+    }
+    driverId = driverProfile.id;
+  } else {
+    driverId = client.assignedDriverId;
+  }
+
   // Check stock BEFORE creating delivery
   if (filled > 0) {
     try {
@@ -25,16 +39,6 @@ async function createDelivery(req, res) {
         });
       }
     } catch { /* if no inventory row yet, skip pre-check */ }
-  }
-
-  // Resolve driverId: drivers use their own profile, admins use the client's assigned driver
-  let driverId;
-  if (req.user.role === 'DRIVER') {
-    const driver = await prisma.driver.findUnique({ where: { userId: req.user.id } });
-    if (!driver) return res.status(404).json({ error: 'Driver profile not found' });
-    driverId = driver.id;
-  } else {
-    driverId = client.assignedDriverId;
   }
 
   const delivery = await prisma.delivery.create({

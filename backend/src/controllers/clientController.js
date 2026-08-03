@@ -35,9 +35,9 @@ async function listClients(req, res) {
     ...(route && { route }),
     ...(search && {
       OR: [
-        { name: { contains: search, mode: 'insensitive' } },
-        { mobile: { contains: search, mode: 'insensitive' } },
-        { address: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search } },
+        { mobile: { contains: search } },
+        { address: { contains: search } },
       ],
     }),
   };

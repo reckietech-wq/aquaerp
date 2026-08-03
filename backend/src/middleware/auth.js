@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const prisma = require('../lib/prisma');
 
 function verifyToken(req, res, next) {
   const header = req.headers.authorization;
@@ -22,9 +23,13 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-function requireDriver(req, res, next) {
+async function requireDriver(req, res, next) {
   if (req.user?.role !== 'DRIVER') {
     return res.status(403).json({ error: 'Driver access required' });
+  }
+  const driver = await prisma.driver.findUnique({ where: { userId: req.user.id } });
+  if (!driver || !driver.isActive) {
+    return res.status(401).json({ error: 'Account deactivated' });
   }
   next();
 }

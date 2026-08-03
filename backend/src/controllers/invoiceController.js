@@ -1,27 +1,39 @@
 const prisma = require('../lib/prisma');
 
+// Returns true if the requesting user is allowed to act on the given client's
+// invoices — admins always pass; drivers must be that client's assigned driver.
+async function canAccessClient(req, clientId) {
+  if (req.user.role !== 'DRIVER') return true;
+  const driverProfile = await prisma.driver.findUnique({ where: { userId: req.user.id } });
+  if (!driverProfile || !driverProfile.isActive) return false;
+  const client = await prisma.client.findUnique({ where: { id: clientId }, select: { assignedDriverId: true } });
+  return !!client && client.assignedDriverId === driverProfile.id;
+}
+
 // ─── POST /api/invoices/generate  (DRIVER only) ───────────────────────────────
 async function generateInvoice(req, res) {
   const { deliveryId, amountPerBottle } = req.body;
 
   if (!deliveryId) return res.status(400).json({ error: 'deliveryId is required' });
-  if (amountPerBottle === undefined || amountPerBottle === null) {
-    return res.status(400).json({ error: 'amountPerBottle is required' });
-  }
-  const rate = parseFloat(amountPerBottle);
-  if (isNaN(rate) || rate <= 0) {
-    return res.status(400).json({ error: 'amountPerBottle must be a positive number' });
-  }
 
   // Fetch delivery with client + driver
   const delivery = await prisma.delivery.findUnique({
     where: { id: deliveryId },
     include: {
-      client: { select: { id: true, name: true, mobile: true, address: true } },
+      client: { select: { id: true, name: true, mobile: true, address: true, ratePerBottle: true } },
       driver: { include: { user: { select: { id: true } } } },
     },
   });
   if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
+
+  // Rate is always sourced from the client's configured rate — never trust the
+  // request body, which just carries a suggestion for display purposes.
+  const clientRate = delivery.client.ratePerBottle != null ? parseFloat(delivery.client.ratePerBottle) : null;
+  const bodyRate = amountPerBottle !== undefined && amountPerBottle !== null ? parseFloat(amountPerBottle) : null;
+  const rate = clientRate ?? bodyRate ?? 50;
+  if (isNaN(rate) || rate <= 0) {
+    return res.status(400).json({ error: 'Client has no valid rate per bottle configured' });
+  }
 
   // Verify delivery belongs to this driver
   if (delivery.driver.user.id !== req.user.id) {
@@ -102,6 +114,9 @@ async function getInvoiceById(req, res) {
     },
   });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+  if (!(await canAccessClient(req, invoice.clientId))) {
+    return res.status(403).json({ error: 'Not authorized for this client' });
+  }
   res.json(invoice);
 }
 
@@ -111,6 +126,9 @@ async function getClientInvoices(req, res) {
 
   const client = await prisma.client.findUnique({ where: { id: clientId } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
+  if (!(await canAccessClient(req, clientId))) {
+    return res.status(403).json({ error: 'Not authorized for this client' });
+  }
 
   // Last paid invoice + outstanding bottles — useful for the driver app pre-fill
   const lastPaid = await prisma.invoice.findFirst({
@@ -156,6 +174,9 @@ async function markInvoicePaid(req, res) {
     include: { client: true },
   });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+  if (!(await canAccessClient(req, invoice.clientId))) {
+    return res.status(403).json({ error: 'Not authorized for this client' });
+  }
   if (invoice.isPaid) return res.json({ message: 'Invoice already paid' });
 
   const paymentMethod = req.body?.paymentMethod || 'CASH';
@@ -226,6 +247,9 @@ async function recordPayment(req, res) {
     include: { client: true },
   });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+  if (!(await canAccessClient(req, invoice.clientId))) {
+    return res.status(403).json({ error: 'Not authorized for this client' });
+  }
 
   const invoiceTotal = parseFloat(invoice.totalAmount);
   const balanceBefore = parseFloat(invoice.client.outstandingBalance);
@@ -293,8 +317,8 @@ async function getAllInvoices(req, res) {
 
   if (search) {
     where.OR = [
-      { invoiceNumber: { contains: search, mode: 'insensitive' } },
-      { client: { name: { contains: search, mode: 'insensitive' } } },
+      { invoiceNumber: { contains: search } },
+      { client: { name: { contains: search } } },
       { client: { mobile: { contains: search } } },
     ];
   }
