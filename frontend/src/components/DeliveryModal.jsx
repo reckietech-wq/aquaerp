@@ -242,11 +242,7 @@ function ClientInfoStep({ client, alreadyDelivered, onProceed }) {
         onClick={onProceed}
         className="w-full flex items-center justify-center gap-2 py-4 bg-blue-900 hover:bg-blue-800 text-white font-bold rounded-2xl text-base active:scale-[0.98] transition-all"
       >
-        {alreadyDelivered ? (
-          <><ReceiptText size={18} /> Go to Invoice</>
-        ) : (
-          <><ArrowRight size={18} /> Record Delivery</>
-        )}
+        <ArrowRight size={18} /> Record Delivery
       </button>
     </div>
   );
@@ -342,7 +338,7 @@ function DeliveryStep({ client, inventory, onRecorded }) {
 
 // ─── STEP 3: Invoice Generation ───────────────────────────────────────────────
 
-function InvoiceStep({ client, delivery, alreadyDelivered, onInvoiceGenerated, onSkip }) {
+function InvoiceStep({ client, delivery, onInvoiceGenerated, onSkip }) {
   const [history, setHistory]       = useState(null);
   const [loading, setLoading]       = useState(true);
   const [rate, setRate]             = useState('');
@@ -383,20 +379,11 @@ function InvoiceStep({ client, delivery, alreadyDelivered, onInvoiceGenerated, o
 
   return (
     <div className="space-y-5">
-      <div className={`flex items-start gap-3 rounded-2xl px-4 py-3 ${
-        alreadyDelivered
-          ? 'bg-amber-50 border border-amber-200'
-          : 'bg-green-50 border border-green-200'
-      }`}>
-        {alreadyDelivered
-          ? <AlertCircle size={18} className="text-amber-500 shrink-0 mt-0.5" />
-          : <CheckCircle2 size={18} className="text-green-600 shrink-0 mt-0.5" />
-        }
+      <div className="flex items-start gap-3 rounded-2xl px-4 py-3 bg-green-50 border border-green-200">
+        <CheckCircle2 size={18} className="text-green-600 shrink-0 mt-0.5" />
         <div>
-          <p className={`font-semibold text-sm ${alreadyDelivered ? 'text-amber-800' : 'text-green-800'}`}>
-            {alreadyDelivered ? 'Already delivered today' : '✅ Delivery recorded!'}
-          </p>
-          <p className={`text-xs mt-0.5 ${alreadyDelivered ? 'text-amber-600' : 'text-green-600'}`}>
+          <p className="font-semibold text-sm text-green-800">✅ Delivery recorded!</p>
+          <p className="text-xs mt-0.5 text-green-600">
             {delivery.filledBottlesDelivered} bottles delivered ·{' '}
             {delivery.emptyBottlesCollected} empty collected
           </p>
@@ -490,7 +477,7 @@ export default function DeliveryModal({ client, onClose, onDelivered }) {
   const alreadyDelivered = !!(client.todayDelivery && client.deliveredToday);
 
   const [step, setStep]         = useState('info');
-  const [delivery, setDelivery] = useState(alreadyDelivered ? client.todayDelivery : null);
+  const [delivery, setDelivery] = useState(null);
   const [invoice, setInvoice]   = useState(null);
   const [inventory, setInventory] = useState(null);
 
@@ -502,7 +489,7 @@ export default function DeliveryModal({ client, onClose, onDelivered }) {
   }, []);
 
   function handleProceedFromInfo() {
-    setStep(alreadyDelivered ? 'invoice' : 'delivery');
+    setStep('delivery');
   }
 
   function handleRecorded(data) {
@@ -561,7 +548,7 @@ export default function DeliveryModal({ client, onClose, onDelivered }) {
           </div>
 
           {/* Step dots */}
-          <StepDots current={step} skipped={alreadyDelivered} />
+          <StepDots current={step} />
 
           {/* Scrollable body */}
           <div className="overflow-y-auto flex-1 px-5 pb-8 pt-2 space-y-5">
@@ -585,7 +572,6 @@ export default function DeliveryModal({ client, onClose, onDelivered }) {
               <InvoiceStep
                 client={client}
                 delivery={delivery}
-                alreadyDelivered={alreadyDelivered}
                 onInvoiceGenerated={handleInvoiceGenerated}
                 onSkip={onClose}
               />

@@ -20,7 +20,7 @@ function StatusBadge({ isActive }) {
 function SkeletonRow() {
   return (
     <tr className="border-b border-slate-100">
-      {Array.from({ length: 8 }).map((_, i) => (
+      {Array.from({ length: 9 }).map((_, i) => (
         <td key={i} className="px-4 py-3">
           <div className="h-4 bg-slate-200 rounded animate-pulse w-24" />
         </td>
@@ -211,6 +211,7 @@ export default function ClientsPage() {
                 <th className="px-4 py-3">Driver</th>
                 <th className="px-4 py-3">Route</th>
                 <th className="px-4 py-3">Tempo</th>
+                <th className="px-4 py-3">Outstanding Balance ₹</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3 text-center">Actions</th>
               </tr>
@@ -220,7 +221,7 @@ export default function ClientsPage() {
                 Array.from({ length: 6 }).map((_, i) => <SkeletonRow key={i} />)
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-16 text-center text-slate-400">
+                  <td colSpan={9} className="px-4 py-16 text-center text-slate-400">
                     <div className="flex flex-col items-center gap-2">
                       <Users size={36} className="opacity-40" />
                       <p className="text-sm">
@@ -255,6 +256,11 @@ export default function ClientsPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-600 font-mono text-xs">{c.tempoNumber}</td>
+                    <td className="px-4 py-3">
+                      <span className={`font-semibold ${Number(c.outstandingBalance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                        ₹{Number(c.outstandingBalance ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </td>
                     <td className="px-4 py-3">
                       <StatusBadge isActive={c.isActive} />
                     </td>

@@ -47,7 +47,7 @@ export default function AddClientPage() {
     setValue,
     watch,
     formState: { errors, isSubmitting },
-  } = useForm();
+  } = useForm({ defaultValues: { ratePerBottle: 50 } });
 
   const selectedDriverId = watch('assignedDriverId');
 
@@ -78,6 +78,7 @@ export default function AddClientPage() {
         assignedDriverId: data.assignedDriverId,
         tempoNumber: data.tempoNumber,
         route: data.route,
+        ratePerBottle: data.ratePerBottle,
       });
       const driverName =
         drivers.find((d) => d.id === data.assignedDriverId)?.user?.name ?? 'selected driver';
@@ -247,6 +248,20 @@ export default function AddClientPage() {
                 hasError={!!errors.tempoNumber}
                 placeholder="e.g. T-001, MH12AB1234"
                 {...register('tempoNumber', { required: 'Tempo number is required' })}
+              />
+            </Field>
+
+            <Field label="Rate Per Bottle (₹)" required error={errors.ratePerBottle?.message}>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                hasError={!!errors.ratePerBottle}
+                {...register('ratePerBottle', {
+                  required: 'Rate per bottle is required',
+                  valueAsNumber: true,
+                  min: { value: 0, message: 'Rate must be positive' },
+                })}
               />
             </Field>
           </div>

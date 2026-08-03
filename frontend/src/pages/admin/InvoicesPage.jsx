@@ -240,6 +240,29 @@ function InvoiceDetailModal({ invoiceId, onClose, onMarkPaid }) {
                 <p className="text-sm text-slate-400">Thank you for your business! 🙏</p>
               </div>
 
+              {/* Payment summary */}
+              <div className="px-5 py-4 border-t border-slate-200 bg-slate-50 space-y-1.5">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Payment Summary</p>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Payment Method</span>
+                  <span className="font-medium text-slate-800">
+                    {invoice.paymentMethod
+                      ? <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${invoice.paymentMethod === 'CASH' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{invoice.paymentMethod}</span>
+                      : '—'}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Amount Paid</span>
+                  <span className="font-medium text-green-700">₹{fmt(invoice.amountPaid ?? 0)} / ₹{fmt(invoice.totalAmount)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Client Outstanding Balance</span>
+                  <span className={`font-semibold ${Number(invoice.client?.outstandingBalance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                    ₹{fmt(invoice.client?.outstandingBalance ?? 0)}
+                  </span>
+                </div>
+              </div>
+
             </div>
           )}
         </div>
@@ -435,7 +458,7 @@ export default function InvoicesPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {['Invoice No', 'Client', 'Driver', 'Bottles', 'Amount', 'Date', 'Status', 'Actions'].map(h => (
+                {['Invoice No', 'Client', 'Driver', 'Bottles', 'Amount', 'Payment Method', 'Amount Paid', 'Outstanding', 'Date', 'Status', 'Actions'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
                     {h}
                   </th>
@@ -446,7 +469,7 @@ export default function InvoicesPage() {
               {loading ? (
                 [...Array(8)].map((_, i) => (
                   <tr key={i}>
-                    {[...Array(8)].map((_, j) => (
+                    {[...Array(11)].map((_, j) => (
                       <td key={j} className="px-4 py-3">
                         <div className="h-4 bg-slate-100 rounded animate-pulse" />
                       </td>
@@ -455,7 +478,7 @@ export default function InvoicesPage() {
                 ))
               ) : invoices.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-slate-400">
+                  <td colSpan={11} className="px-4 py-12 text-center text-slate-400">
                     <FileText size={32} className="mx-auto mb-2 opacity-30" />
                     No invoices found
                   </td>
@@ -477,6 +500,23 @@ export default function InvoicesPage() {
                     </td>
                     <td className="px-4 py-3 font-semibold text-slate-800 whitespace-nowrap">
                       ₹{fmt(inv.totalAmount)}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      {inv.paymentMethod ? (
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${inv.paymentMethod === 'CASH' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
+                          {inv.paymentMethod}
+                        </span>
+                      ) : (
+                        <span className="text-slate-300 text-xs">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
+                      ₹{fmt(inv.amountPaid ?? 0)}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className={`font-semibold ${Number(inv.client?.outstandingBalance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                        ₹{fmt(inv.client?.outstandingBalance ?? 0)}
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">
                       {fmtDate(inv.createdAt)}

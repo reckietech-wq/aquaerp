@@ -1,7 +1,7 @@
 const prisma = require('../lib/prisma');
 
 async function createClient(req, res) {
-  const { name, mobile, email, address, assignedDriverId, tempoNumber, route } = req.body;
+  const { name, mobile, email, address, assignedDriverId, tempoNumber, route, ratePerBottle } = req.body;
 
   if (!name || !mobile || !address || !assignedDriverId || !tempoNumber || !route) {
     return res.status(400).json({ error: 'name, mobile, address, assignedDriverId, tempoNumber, and route are required' });
@@ -12,7 +12,10 @@ async function createClient(req, res) {
   if (!driver.isActive) return res.status(400).json({ error: 'Assigned driver is inactive' });
 
   const client = await prisma.client.create({
-    data: { name, mobile, email, address, assignedDriverId, tempoNumber, route },
+    data: {
+      name, mobile, email, address, assignedDriverId, tempoNumber, route,
+      ...(ratePerBottle !== undefined && { ratePerBottle }),
+    },
     include: {
       assignedDriver: {
         include: { user: { select: { id: true, name: true, mobile: true } } },
@@ -78,7 +81,7 @@ async function getClient(req, res) {
 }
 
 async function updateClient(req, res) {
-  const { name, mobile, email, address, assignedDriverId, tempoNumber, route } = req.body;
+  const { name, mobile, email, address, assignedDriverId, tempoNumber, route, ratePerBottle } = req.body;
 
   const client = await prisma.client.findUnique({ where: { id: req.params.id } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
@@ -99,6 +102,7 @@ async function updateClient(req, res) {
       ...(assignedDriverId && { assignedDriverId }),
       ...(tempoNumber && { tempoNumber }),
       ...(route && { route }),
+      ...(ratePerBottle !== undefined && { ratePerBottle }),
     },
     include: {
       assignedDriver: {
@@ -122,4 +126,16 @@ async function deleteClient(req, res) {
   res.json({ message: 'Client deactivated' });
 }
 
-module.exports = { createClient, listClients, getClient, updateClient, deleteClient };
+async function getClientPayments(req, res) {
+  const client = await prisma.client.findUnique({ where: { id: req.params.id } });
+  if (!client) return res.status(404).json({ error: 'Client not found' });
+
+  const payments = await prisma.paymentHistory.findMany({
+    where: { clientId: req.params.id },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  res.json(payments);
+}
+
+module.exports = { createClient, listClients, getClient, updateClient, deleteClient, getClientPayments };

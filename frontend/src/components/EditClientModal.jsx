@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { X, AlertTriangle, PackageCheck, MapPin } from 'lucide-react';
+import { X, AlertTriangle, PackageCheck, MapPin, IndianRupee } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../lib/api';
 
@@ -89,6 +89,8 @@ export default function EditClientModal({ client, drivers, onClose, onSaved }) {
   const [loadingDetail, setLoadingDetail] = useState(true);
   const [showConfirm, setShowConfirm] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
+  const [payments, setPayments] = useState([]);
+  const [loadingPayments, setLoadingPayments] = useState(true);
 
   const activeDrivers = drivers.filter((d) => d.isActive);
 
@@ -112,12 +114,18 @@ export default function EditClientModal({ client, drivers, onClose, onSaved }) {
       assignedDriverId: client.assignedDriverId,
       tempoNumber: client.tempoNumber,
       route: client.route,
+      ratePerBottle: Number(client.ratePerBottle ?? 50),
     });
 
     api.get(`/api/clients/${client.id}`)
       .then((res) => setDetail(res.data))
       .catch(() => {})
       .finally(() => setLoadingDetail(false));
+
+    api.get(`/api/clients/${client.id}/payments`)
+      .then((res) => setPayments(res.data))
+      .catch(() => {})
+      .finally(() => setLoadingPayments(false));
   }, [client, reset]);
 
   // Auto-fill route on driver change (only if driver actually changes)
@@ -140,6 +148,7 @@ export default function EditClientModal({ client, drivers, onClose, onSaved }) {
         assignedDriverId: data.assignedDriverId,
         tempoNumber: data.tempoNumber,
         route: data.route,
+        ratePerBottle: data.ratePerBottle,
       });
       toast.success('Client updated');
       onSaved();
@@ -269,6 +278,19 @@ export default function EditClientModal({ client, drivers, onClose, onSaved }) {
                   {...register('tempoNumber', { required: 'Required' })}
                 />
               </Field>
+              <Field label="Rate Per Bottle (₹)" required error={errors.ratePerBottle?.message}>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  hasError={!!errors.ratePerBottle}
+                  {...register('ratePerBottle', {
+                    required: 'Rate per bottle is required',
+                    valueAsNumber: true,
+                    min: { value: 0, message: 'Rate must be positive' },
+                  })}
+                />
+              </Field>
             </div>
 
             {/* Actions */}
@@ -348,6 +370,52 @@ export default function EditClientModal({ client, drivers, onClose, onSaved }) {
                     </div>
                     <span className="text-xs text-slate-400 shrink-0">{fmtDate(d.deliveryDate)}</span>
                     <StatusBadge status={d.status} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Payment history */}
+          <div className="border-t border-slate-100 px-6 py-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-slate-600 flex items-center gap-2">
+                <IndianRupee size={15} className="text-slate-400" />
+                Payment History
+              </h3>
+              <span className={`text-xs font-semibold ${Number(client.outstandingBalance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                Outstanding: ₹{Number(client.outstandingBalance ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+
+            {loadingPayments ? (
+              <div className="space-y-2">
+                {[1, 2].map((i) => (
+                  <div key={i} className="h-10 bg-slate-100 rounded-lg animate-pulse" />
+                ))}
+              </div>
+            ) : payments.length === 0 ? (
+              <p className="text-sm text-slate-400 italic">No payments recorded yet</p>
+            ) : (
+              <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                {payments.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center gap-3 bg-slate-50 rounded-xl px-3 py-2.5 text-sm"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <span className="text-slate-700 font-semibold">
+                        ₹{Number(p.amountPaid).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </span>
+                      <span className="text-slate-400 mx-1.5">·</span>
+                      <span className="text-xs text-slate-500">
+                        Balance after: ₹{Number(p.balanceAfter).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold shrink-0 ${p.paymentMethod === 'CASH' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
+                      {p.paymentMethod}
+                    </span>
+                    <span className="text-xs text-slate-400 shrink-0">{fmtDate(p.createdAt)}</span>
                   </div>
                 ))}
               </div>

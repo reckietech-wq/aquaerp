@@ -4,6 +4,7 @@ const {
   getInvoiceById,
   getClientInvoices,
   markInvoicePaid,
+  recordPayment,
   getAllInvoices,
   getInvoiceStats,
 } = require('../controllers/invoiceController');
@@ -20,6 +21,7 @@ router.post('/generate',               requireDriver, generateInvoice);
 
 // Dynamic paths last
 router.get('/:invoiceId',                             getInvoiceById);
-router.put('/:invoiceId/mark-paid',    requireAdmin,  markInvoicePaid);
+router.put('/:invoiceId/mark-paid',                   markInvoicePaid);
+router.put('/:invoiceId/record-payment',              recordPayment);
 
 module.exports = router;

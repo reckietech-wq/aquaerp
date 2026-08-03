@@ -66,6 +66,8 @@ async function getMyClients(req, res) {
       address: c.address,
       route: c.route,
       tempoNumber: c.tempoNumber,
+      ratePerBottle: c.ratePerBottle,
+      outstandingBalance: c.outstandingBalance,
       totalDeliveries: c._count.deliveries,
       lastDeliveryDate: lastMap[c.id]?.date ?? null,
       lastDeliveryBottles: lastMap[c.id]?.bottles ?? null,

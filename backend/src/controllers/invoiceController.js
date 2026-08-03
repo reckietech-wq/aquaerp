@@ -88,7 +88,7 @@ async function getInvoiceById(req, res) {
     where: { id: req.params.invoiceId },
     include: {
       client: {
-        select: { id: true, name: true, mobile: true, address: true },
+        select: { id: true, name: true, mobile: true, address: true, outstandingBalance: true, ratePerBottle: true },
       },
       delivery: {
         select: {
@@ -149,20 +149,115 @@ async function getClientInvoices(req, res) {
   });
 }
 
-// ─── PUT /api/invoices/:invoiceId/mark-paid  (ADMIN only) ────────────────────
+// ─── PUT /api/invoices/:invoiceId/mark-paid  (ADMIN or DRIVER) ───────────────
 async function markInvoicePaid(req, res) {
-  const invoice = await prisma.invoice.findUnique({ where: { id: req.params.invoiceId } });
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: req.params.invoiceId },
+    include: { client: true },
+  });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
   if (invoice.isPaid) return res.status(409).json({ error: 'Invoice is already marked as paid' });
 
-  const updated = await prisma.invoice.update({
-    where: { id: req.params.invoiceId },
-    data: { isPaid: true, paidAt: new Date() },
-    include: {
-      client: { select: { id: true, name: true, mobile: true } },
-    },
-  });
+  const paymentMethod = req.body?.paymentMethod || 'CASH';
+  const totalAmount = parseFloat(invoice.totalAmount);
+  const balanceBefore = parseFloat(invoice.client.outstandingBalance);
+  const balanceAfter = balanceBefore - totalAmount;
+
+  const [updated] = await prisma.$transaction([
+    prisma.invoice.update({
+      where: { id: req.params.invoiceId },
+      data: {
+        isPaid: true,
+        paidAt: new Date(),
+        amountPaid: totalAmount,
+        paymentMethod,
+      },
+      include: {
+        client: { select: { id: true, name: true, mobile: true } },
+      },
+    }),
+    prisma.client.update({
+      where: { id: invoice.clientId },
+      data: { outstandingBalance: balanceAfter },
+    }),
+    prisma.paymentHistory.create({
+      data: {
+        clientId: invoice.clientId,
+        invoiceId: invoice.id,
+        amountPaid: totalAmount,
+        paymentMethod,
+        balanceBefore,
+        balanceAfter,
+        recordedBy: req.user.loginId,
+      },
+    }),
+  ]);
+
   res.json(updated);
+}
+
+// ─── PUT /api/invoices/:invoiceId/record-payment  (ADMIN or DRIVER) ──────────
+async function recordPayment(req, res) {
+  const { invoiceId } = req.params;
+  const { amountPaid, paymentMethod } = req.body;
+
+  if (amountPaid === undefined || amountPaid === null) {
+    return res.status(400).json({ error: 'amountPaid is required' });
+  }
+  const amount = parseFloat(amountPaid);
+  if (isNaN(amount) || amount <= 0) {
+    return res.status(400).json({ error: 'amountPaid must be a positive number' });
+  }
+  if (!paymentMethod) {
+    return res.status(400).json({ error: 'paymentMethod is required' });
+  }
+
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: { client: true },
+  });
+  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+
+  const invoiceTotal = parseFloat(invoice.totalAmount);
+  const balanceBefore = parseFloat(invoice.client.outstandingBalance);
+  const newBalance = balanceBefore + invoiceTotal - amount;
+  const isFullyPaid = amount >= invoiceTotal;
+
+  const [updatedInvoice, updatedClient, payment] = await prisma.$transaction([
+    prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        amountPaid: amount,
+        paymentMethod,
+        ...(isFullyPaid && { isPaid: true, paidAt: new Date() }),
+      },
+      include: {
+        client: { select: { id: true, name: true, mobile: true } },
+      },
+    }),
+    prisma.client.update({
+      where: { id: invoice.clientId },
+      data: { outstandingBalance: newBalance },
+    }),
+    prisma.paymentHistory.create({
+      data: {
+        clientId: invoice.clientId,
+        invoiceId: invoice.id,
+        amountPaid: amount,
+        paymentMethod,
+        balanceBefore,
+        balanceAfter: newBalance,
+        recordedBy: req.user.loginId,
+      },
+    }),
+  ]);
+
+  res.json({
+    invoice: updatedInvoice,
+    client: { outstandingBalance: updatedClient.outstandingBalance },
+    payment,
+    message: 'Payment recorded successfully',
+  });
 }
 
 // ─── GET /api/invoices  (ADMIN only) ─────────────────────────────────────────
@@ -204,6 +299,7 @@ async function getAllInvoices(req, res) {
             id: true,
             name: true,
             mobile: true,
+            outstandingBalance: true,
             assignedDriver: { select: { user: { select: { name: true } } } },
           },
         },
@@ -242,4 +338,12 @@ async function getInvoiceStats(req, res) {
   res.json({ total, paid, unpaid, outstanding });
 }
 
-module.exports = { generateInvoice, getInvoiceById, getClientInvoices, markInvoicePaid, getAllInvoices, getInvoiceStats };
+module.exports = {
+  generateInvoice,
+  getInvoiceById,
+  getClientInvoices,
+  markInvoicePaid,
+  recordPayment,
+  getAllInvoices,
+  getInvoiceStats,
+};

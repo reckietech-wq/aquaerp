@@ -65,22 +65,25 @@ model Driver {
 }
 
 model Client {
-  id               String   @id @default(cuid())
-  name             String
-  mobile           String
-  email            String?
-  address          String   @db.Text
-  assignedDriverId String
-  route            String
-  tempoNumber      String
-  isActive         Boolean  @default(true)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                  String   @id @default(cuid())
+  name                String
+  mobile              String
+  email               String?
+  address             String   @db.Text
+  assignedDriverId    String
+  route               String
+  tempoNumber         String
+  ratePerBottle       Decimal  @default(50) @db.Decimal(10, 2)
+  outstandingBalance  Decimal  @default(0) @db.Decimal(10, 2)
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
-  assignedDriver Driver        @relation(fields: [assignedDriverId], references: [id])
+  assignedDriver Driver            @relation(fields: [assignedDriverId], references: [id])
   deliveries     Delivery[]
   invoices       Invoice[]
   monthlyBills   MonthlyBill[]
+  paymentHistory PaymentHistory[]
 }
 
 model Delivery {
@@ -132,11 +135,26 @@ model Invoice {
   totalAmount               Decimal   @db.Decimal(10, 2)
   isPaid                    Boolean   @default(false)
   paidAt                    DateTime?
+  amountPaid                Decimal   @default(0) @db.Decimal(10, 2)
+  paymentMethod             String?
   paymentQrData             String?   @db.Text
   createdAt                 DateTime  @default(now())
 
   client   Client   @relation(fields: [clientId], references: [id])
   delivery Delivery @relation(fields: [deliveryId], references: [id])
+}
+
+model PaymentHistory {
+  id            String   @id @default(cuid())
+  clientId      String
+  client        Client   @relation(fields: [clientId], references: [id])
+  invoiceId     String?
+  amountPaid    Decimal  @db.Decimal(10, 2)
+  paymentMethod String
+  balanceBefore Decimal  @db.Decimal(10, 2)
+  balanceAfter  Decimal  @db.Decimal(10, 2)
+  recordedBy    String
+  createdAt     DateTime @default(now())
 }
 
 model BottleInventory {
