@@ -156,14 +156,16 @@ async function markInvoicePaid(req, res) {
     include: { client: true },
   });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
-  if (invoice.isPaid) return res.status(409).json({ error: 'Invoice is already marked as paid' });
+  if (invoice.isPaid) return res.json({ message: 'Invoice already paid' });
 
   const paymentMethod = req.body?.paymentMethod || 'CASH';
   const totalAmount = parseFloat(invoice.totalAmount);
+  const alreadyPaid = parseFloat(invoice.amountPaid);
+  const remainingUnpaid = totalAmount - alreadyPaid;
   const balanceBefore = parseFloat(invoice.client.outstandingBalance);
-  const balanceAfter = balanceBefore - totalAmount;
+  const balanceAfter = remainingUnpaid > 0 ? balanceBefore - remainingUnpaid : balanceBefore;
 
-  const [updated] = await prisma.$transaction([
+  const operations = [
     prisma.invoice.update({
       where: { id: req.params.invoiceId },
       data: {
@@ -176,22 +178,29 @@ async function markInvoicePaid(req, res) {
         client: { select: { id: true, name: true, mobile: true } },
       },
     }),
-    prisma.client.update({
-      where: { id: invoice.clientId },
-      data: { outstandingBalance: balanceAfter },
-    }),
-    prisma.paymentHistory.create({
-      data: {
-        clientId: invoice.clientId,
-        invoiceId: invoice.id,
-        amountPaid: totalAmount,
-        paymentMethod,
-        balanceBefore,
-        balanceAfter,
-        recordedBy: req.user.loginId,
-      },
-    }),
-  ]);
+  ];
+
+  if (remainingUnpaid > 0) {
+    operations.push(
+      prisma.client.update({
+        where: { id: invoice.clientId },
+        data: { outstandingBalance: balanceAfter },
+      }),
+      prisma.paymentHistory.create({
+        data: {
+          clientId: invoice.clientId,
+          invoiceId: invoice.id,
+          amountPaid: remainingUnpaid,
+          paymentMethod,
+          balanceBefore,
+          balanceAfter,
+          recordedBy: req.user.loginId,
+        },
+      }),
+    );
+  }
+
+  const [updated] = await prisma.$transaction(operations);
 
   res.json(updated);
 }
