@@ -195,7 +195,7 @@ async function getSingleBill(req, res) {
 
   const invoiceNumber = `BILL-${bill.year}-${String(bill.month).padStart(2, '0')}-${bill.clientId.slice(-6).toUpperCase()}`;
   const upiId    = process.env.BUSINESS_UPI_ID || process.env.UPI_ID || '';
-  const bizName  = process.env.BUSINESS_NAME || 'AquaERP';
+  const bizName  = process.env.BUSINESS_NAME || 'Gajanan Aqua';
   const paymentQrData = upiId
     ? `upi://pay?pa=${upiId}&pn=${encodeURIComponent(bizName)}&am=${bill.totalAmount}&tn=${invoiceNumber}`
     : '';

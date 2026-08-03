@@ -91,7 +91,7 @@ export default function AdminLayout() {
             <Droplets size={18} className="text-white" />
           </div>
           {!collapsed && (
-            <span className="text-white font-bold text-lg tracking-tight">AquaERP</span>
+            <span className="text-white font-bold text-lg tracking-tight">Gajanan Aqua</span>
           )}
         </div>
 
@@ -146,7 +146,7 @@ export default function AdminLayout() {
         <header className="flex items-center justify-between px-4 md:px-6 py-3 bg-white border-b border-slate-200 shrink-0">
           <div className="flex items-center gap-2 md:hidden">
             <Droplets size={20} className="text-blue-900" />
-            <span className="text-blue-900 font-bold text-base">AquaERP</span>
+            <span className="text-blue-900 font-bold text-base">Gajanan Aqua</span>
           </div>
           <div className="hidden md:block" />
 

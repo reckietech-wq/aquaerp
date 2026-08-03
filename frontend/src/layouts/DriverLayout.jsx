@@ -23,7 +23,7 @@ export default function DriverLayout() {
         <div className="flex items-center gap-2">
           <span className="text-xl">💧</span>
           <div>
-            <p className="font-bold text-base leading-tight">AquaERP</p>
+            <p className="font-bold text-base leading-tight">Gajanan Aqua</p>
             <p className="text-blue-300 text-xs leading-tight">Driver Panel</p>
           </div>
         </div>

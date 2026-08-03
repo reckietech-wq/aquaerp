@@ -427,7 +427,7 @@ export default function DriverCredentialsModal({ driver, onClose, onSaved }) {
                     <Smartphone size={14} /> Share with Driver
                   </p>
                   <div className="text-sm text-blue-800 space-y-1">
-                    <p>App: <span className="font-medium">AquaERP Driver App</span></p>
+                    <p>App: <span className="font-medium">Gajanan Aqua Driver App</span></p>
                     <div className="flex items-center gap-2">
                       <span>Login ID: <span className="font-mono font-medium">{loginIdValue || data.user.loginId}</span></span>
                       <button

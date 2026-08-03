@@ -138,7 +138,7 @@ function InvoiceShareModal({ bill, onClose, onSent, onPaid }) {
         `Bottles: ${d.totalBottlesDelivered} × ${fmtRupee(d.ratePerBottle)} = *${fmtRupee(d.totalAmount)}*`,
         `Invoice: ${invoiceNumber}`,
         `Status: ${d.status}`,
-        `\nThank you — AquaERP`,
+        `\nThank you — Gajanan Aqua`,
       ].join('\n');
       const url = buildWaUrl(clientMobile, message);
       // Download PDF + open WA simultaneously
@@ -191,7 +191,7 @@ td{padding:10px 12px;border:1px solid #e2e8f0}
 .footer{text-align:center;color:#94a3b8;font-size:11px;margin-top:20px;padding-top:12px;border-top:1px solid #e2e8f0}
 </style></head><body>
 <div class="header">
-  <div><div class="logo">💧 AquaERP</div><div class="sub">Water Can Supply Co.</div></div>
+  <div><div class="logo">💧 Gajanan Aqua</div><div class="sub">Water Can Supply Co.</div></div>
   <div style="text-align:right">
     <div class="inv-label">Invoice</div>
     <div class="inv-num">${invoiceNumber}</div>
@@ -226,7 +226,7 @@ td{padding:10px 12px;border:1px solid #e2e8f0}
 </table>
 <div class="total-row">Total Amount: ₹${Number(b.totalAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
 <div><span class="status ${b.status === 'PAID' ? 'paid' : 'pending'}">${b.status === 'PAID' ? '✅ PAID' : '⏳ PENDING PAYMENT'}</span></div>
-<div class="footer">AquaERP · Water Can Delivery Management · Thank you for your business!</div>
+<div class="footer">Gajanan Aqua · Water Can Delivery Management · Thank you for your business!</div>
 </body></html>`);
     w.document.close();
     setTimeout(() => { w.print(); }, 350);
@@ -311,7 +311,7 @@ td{padding:10px 12px;border:1px solid #e2e8f0}
                         <Droplets size={18} className="text-white" />
                       </div>
                       <div>
-                        <p className="font-bold text-base text-blue-900 leading-tight">AquaERP</p>
+                        <p className="font-bold text-base text-blue-900 leading-tight">Gajanan Aqua</p>
                         <p className="text-slate-400 text-xs">Water Can Supply Co.</p>
                       </div>
                     </div>
@@ -553,7 +553,7 @@ function BatchSendModal({ bills, onClose, onBatchSent }) {
         `Your water can invoice for ${monthLabel} is ready.`,
         `Bottles: ${b.totalBottlesDelivered} × ${fmtRupee(b.ratePerBottle)} = *${fmtRupee(b.totalAmount)}*`,
         `Invoice: ${invNum}`,
-        `\nThank you — AquaERP`,
+        `\nThank you — Gajanan Aqua`,
       ].join('\n');
       map[b.id] = { url: buildWaUrl(b.client?.mobile, message) };
     });

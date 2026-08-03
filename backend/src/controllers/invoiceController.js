@@ -70,7 +70,7 @@ async function generateInvoice(req, res) {
   const invoiceNumber = `INV-${Date.now()}-${clientId}`;
 
   const upiId      = process.env.BUSINESS_UPI_ID || process.env.UPI_ID || '';
-  const bizName    = process.env.BUSINESS_NAME || 'AquaERP';
+  const bizName    = process.env.BUSINESS_NAME || 'Gajanan Aqua';
   const paymentQrData = upiId
     ? `upi://pay?pa=${upiId}&pn=${encodeURIComponent(bizName)}&am=${totalAmount}&tn=${invoiceNumber}`
     : '';

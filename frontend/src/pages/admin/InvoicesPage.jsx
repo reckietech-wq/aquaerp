@@ -118,7 +118,7 @@ function InvoiceDetailModal({ invoiceId, onClose, onMarkPaid }) {
                     <Droplets size={20} />
                   </div>
                   <div>
-                    <p className="font-bold text-lg leading-none">AquaERP</p>
+                    <p className="font-bold text-lg leading-none">Gajanan Aqua</p>
                     <p className="text-blue-300 text-xs mt-0.5">Water Can Supply</p>
                   </div>
                 </div>

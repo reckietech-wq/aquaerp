@@ -67,7 +67,8 @@ async function generateMonthlyInvoicePDF(billId) {
   const { client } = bill;
   const invoiceNo  = `BILL-${bill.year}-${String(bill.month).padStart(2, '0')}-${client.id.slice(-6).toUpperCase()}`;
   const upiId      = process.env.UPI_ID || 'yourbusiness@upi';
-  const upiString  = `upi://pay?pa=${upiId}&pn=AquaERP&am=${Number(bill.totalAmount).toFixed(2)}&cu=INR&tn=${invoiceNo}`;
+  const bizName    = process.env.BUSINESS_NAME || 'Gajanan Aqua';
+  const upiString  = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(bizName)}&am=${Number(bill.totalAmount).toFixed(2)}&cu=INR&tn=${invoiceNo}`;
 
   // ── Generate QR buffer ──────────────────────────────────────────────────────
   const qrBuffer = await QRCode.toBuffer(upiString, {
@@ -97,7 +98,7 @@ async function generateMonthlyInvoicePDF(billId) {
     // Logo / company name
     doc.fillColor('#ffffff')
        .fontSize(22).font('Helvetica-Bold')
-       .text('AquaERP', 50, 22);
+       .text(bizName, 50, 22);
     doc.fontSize(10).font('Helvetica')
        .fillColor('#93c5fd')
        .text('Water Can Delivery Management', 50, 48);
@@ -240,7 +241,7 @@ async function generateMonthlyInvoicePDF(billId) {
     doc.fillColor('#ffffff').fontSize(9).font('Helvetica-Bold')
        .text('Thank you for your business!', 0, footerY + 10, { align: 'center', width: W });
     doc.fontSize(7).font('Helvetica').fillColor('#93c5fd')
-       .text('AquaERP · Water Can Delivery Management', 0, footerY + 26,
+       .text(`${bizName} · Water Can Delivery Management`, 0, footerY + 26,
              { align: 'center', width: W });
 
     doc.end();

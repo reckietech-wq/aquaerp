@@ -20,7 +20,7 @@ function normalizeMobile(raw) {
 
 function buildWhatsAppMessage(bill) {
   const upiId       = process.env.BUSINESS_UPI_ID || process.env.UPI_ID || 'yourbusiness@upi';
-  const bizName     = process.env.BUSINESS_NAME   || 'AquaERP';
+  const bizName     = process.env.BUSINESS_NAME   || 'Gajanan Aqua';
   const monthName   = MONTH_NAMES[bill.month];
   const clientName  = bill.client?.name ?? 'Customer';
   const rate        = fmtAmount(bill.ratePerBottle);

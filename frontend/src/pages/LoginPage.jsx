@@ -49,7 +49,7 @@ export default function LoginPage() {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white/10 backdrop-blur mb-4">
             <span className="text-3xl">💧</span>
           </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">AquaERP</h1>
+          <h1 className="text-3xl font-bold text-white tracking-tight">Gajanan Aqua</h1>
           <p className="text-blue-300 text-sm mt-1">Water Can Delivery Management</p>
         </div>
 
@@ -119,7 +119,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-blue-400 text-xs mt-6">
-          © {new Date().getFullYear()} AquaERP · All rights reserved
+          © {new Date().getFullYear()} Gajanan Aqua · All rights reserved
         </p>
       </div>
     </div>

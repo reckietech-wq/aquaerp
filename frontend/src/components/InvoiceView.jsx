@@ -60,7 +60,7 @@ export default function InvoiceView({ invoice, onClose }) {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Droplets size={20} className="text-blue-300" />
-              <span className="font-bold text-lg tracking-tight">AquaERP</span>
+              <span className="font-bold text-lg tracking-tight">Gajanan Aqua</span>
             </div>
             <div className="text-right">
               <p className="text-xs text-blue-300 font-semibold uppercase tracking-widest">Tax Invoice</p>
@@ -146,7 +146,7 @@ export default function InvoiceView({ invoice, onClose }) {
             <CheckCircle2 size={14} />
             <span className="text-xs font-semibold">Thank you for your business!</span>
           </div>
-          <p className="text-xs text-slate-400">AquaERP · Water Can Delivery Management</p>
+          <p className="text-xs text-slate-400">Gajanan Aqua · Water Can Delivery Management</p>
         </div>
       </div>
 

@@ -142,7 +142,7 @@ export default function AddDriverPage() {
 
             <div className="pt-2 border-t border-blue-100">
               <p className="text-xs font-semibold text-blue-400 uppercase tracking-wide">App</p>
-              <p className="text-sm text-blue-800 mt-0.5">AquaERP Driver App</p>
+              <p className="text-sm text-blue-800 mt-0.5">Gajanan Aqua Driver App</p>
             </div>
           </div>
 
