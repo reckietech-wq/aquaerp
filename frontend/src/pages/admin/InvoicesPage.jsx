@@ -5,8 +5,9 @@ import { QRCodeSVG } from 'qrcode.react';
 import {
   Search, X, ChevronLeft, ChevronRight,
   Eye, CheckCircle, Clock, Droplets,
-  FileText, IndianRupee, CheckCheck,
+  FileText, IndianRupee, CheckCheck, ReceiptText,
 } from 'lucide-react';
+import ClientStatementModal from '../../components/ClientStatementModal';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -307,12 +308,20 @@ export default function InvoicesPage() {
   const [status, setStatus]     = useState('all');   // 'all' | 'paid' | 'unpaid'
   const [from, setFrom]         = useState('');
   const [to, setTo]             = useState('');
+  const [clientFilter, setClientFilter] = useState(''); // clientId to group/filter by
 
   // modal
   const [selectedId, setSelectedId] = useState(null);
+  const [statementClientId, setStatementClientId] = useState(null);
 
   // stats (from full unfiltered data — fetched separately once)
   const [stats, setStats] = useState({ total: 0, paid: 0, unpaid: 0, outstanding: 0 });
+
+  // clients for the "group by client" filter dropdown
+  const [clients, setClients] = useState([]);
+  useEffect(() => {
+    api.get('/api/clients').then((r) => setClients(r.data)).catch(() => {});
+  }, []);
 
   // debounce search
   const searchTimer = useRef(null);
@@ -334,6 +343,7 @@ export default function InvoicesPage() {
       if (debouncedSearch) params.set('search', debouncedSearch);
       if (from) params.set('from', from);
       if (to) params.set('to', to);
+      if (clientFilter) params.set('clientId', clientFilter);
 
       const { data } = await api.get(`/api/invoices?${params}`);
       setInvoices(data.invoices);
@@ -344,7 +354,7 @@ export default function InvoicesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, status, debouncedSearch, from, to]);
+  }, [page, status, debouncedSearch, from, to, clientFilter]);
 
   useEffect(() => { fetchInvoices(); }, [fetchInvoices]);
 
@@ -371,10 +381,11 @@ export default function InvoicesPage() {
     setStatus('all');
     setFrom('');
     setTo('');
+    setClientFilter('');
     setPage(1);
   }
 
-  const hasFilters = search || status !== 'all' || from || to;
+  const hasFilters = search || status !== 'all' || from || to || clientFilter;
 
   return (
     <div className="space-y-6">
@@ -406,6 +417,18 @@ export default function InvoicesPage() {
             className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
+
+        {/* Client filter — group invoices by client */}
+        <select
+          value={clientFilter}
+          onChange={e => { setClientFilter(e.target.value); setPage(1); }}
+          className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-slate-700 min-w-[160px]"
+        >
+          <option value="">All Clients</option>
+          {clients.map(c => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
 
         {/* Status filter */}
         <div className="flex rounded-lg border border-slate-200 overflow-hidden text-sm font-medium">
@@ -458,7 +481,7 @@ export default function InvoicesPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {['Invoice No', 'Client', 'Driver', 'Bottles', 'Amount', 'Payment Method', 'Amount Paid', 'Outstanding', 'Date', 'Status', 'Actions'].map(h => (
+                {['Invoice No', 'Client', 'Driver', 'Delivery Date', 'Bottles', 'Amount', 'Payment Method', 'Amount Paid', 'Outstanding', 'Status', 'Actions'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
                     {h}
                   </th>
@@ -495,8 +518,11 @@ export default function InvoicesPage() {
                       <p className="text-xs text-slate-400">{inv.client?.mobile}</p>
                     </td>
                     <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{driverName}</td>
+                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">
+                      {fmtDate(inv.delivery?.deliveryDate)}
+                    </td>
                     <td className="px-4 py-3 text-slate-700 font-medium text-center">
-                      {inv.bottlesTakenSinceLastPaid}
+                      {inv.delivery?.filledBottlesDelivered ?? inv.bottlesTakenSinceLastPaid}
                     </td>
                     <td className="px-4 py-3 font-semibold text-slate-800 whitespace-nowrap">
                       ₹{fmt(inv.totalAmount)}
@@ -518,9 +544,6 @@ export default function InvoicesPage() {
                         ₹{fmt(inv.client?.outstandingBalance ?? 0)}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">
-                      {fmtDate(inv.createdAt)}
-                    </td>
                     <td className="px-4 py-3">
                       {inv.isPaid ? (
                         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs font-semibold whitespace-nowrap">
@@ -540,6 +563,13 @@ export default function InvoicesPage() {
                           className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
                         >
                           <Eye size={15} />
+                        </button>
+                        <button
+                          onClick={() => setStatementClientId(inv.clientId)}
+                          title="View client statement"
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-purple-600 hover:bg-purple-50 transition-colors"
+                        >
+                          <ReceiptText size={15} />
                         </button>
                         {!inv.isPaid && (
                           <button
@@ -603,6 +633,14 @@ export default function InvoicesPage() {
           invoiceId={selectedId}
           onClose={() => setSelectedId(null)}
           onMarkPaid={refreshAll}
+        />
+      )}
+
+      {/* Consolidated client statement modal */}
+      {statementClientId && (
+        <ClientStatementModal
+          clientId={statementClientId}
+          onClose={() => { setStatementClientId(null); refreshAll(); }}
         />
       )}
     </div>

@@ -1,9 +1,10 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Search, Users, Pencil, MapPin, Phone } from 'lucide-react';
+import { Plus, Search, Users, Pencil, MapPin, Phone, FileText } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../lib/api';
 import EditClientModal from '../../components/EditClientModal';
+import ClientStatementModal from '../../components/ClientStatementModal';
 
 function StatusBadge({ isActive }) {
   return (
@@ -29,7 +30,7 @@ function SkeletonRow() {
   );
 }
 
-function MobileCard({ client, onEdit }) {
+function MobileCard({ client, onEdit, onViewStatement }) {
   return (
     <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 space-y-3">
       <div className="flex items-start justify-between gap-2">
@@ -41,6 +42,13 @@ function MobileCard({ client, onEdit }) {
         </div>
         <div className="flex items-center gap-2">
           <StatusBadge isActive={client.isActive} />
+          <button
+            onClick={() => onViewStatement(client)}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+            title="View statement"
+          >
+            <FileText size={14} />
+          </button>
           <button
             onClick={() => onEdit(client)}
             className="p-1.5 rounded-lg text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
@@ -57,6 +65,12 @@ function MobileCard({ client, onEdit }) {
         <span>· Tempo: {client.tempoNumber}</span>
         <span>· {client.assignedDriver?.user?.name ?? '—'}</span>
       </div>
+      <div className="flex justify-between items-center text-xs pt-1 border-t border-slate-100">
+        <span className="text-slate-400">Outstanding</span>
+        <span className={`font-semibold ${Number(client.outstandingBalance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+          ₹{Number(client.outstandingBalance ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </span>
+      </div>
     </div>
   );
 }
@@ -71,6 +85,7 @@ export default function ClientsPage() {
   const [filterDriver, setFilterDriver] = useState('');
   const [filterRoute, setFilterRoute] = useState('');
   const [editClient, setEditClient] = useState(null);
+  const [statementClient, setStatementClient] = useState(null);
 
   async function fetchClients() {
     try {
@@ -194,7 +209,7 @@ export default function ClientsPage() {
           </div>
         ) : (
           filtered.map((c) => (
-            <MobileCard key={c.id} client={c} onEdit={setEditClient} />
+            <MobileCard key={c.id} client={c} onEdit={setEditClient} onViewStatement={setStatementClient} />
           ))
         )}
       </div>
@@ -265,13 +280,22 @@ export default function ClientsPage() {
                       <StatusBadge isActive={c.isActive} />
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <button
-                        onClick={() => setEditClient(c)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
-                        title="Edit client"
-                      >
-                        <Pencil size={15} />
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          onClick={() => setStatementClient(c)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+                          title="View statement"
+                        >
+                          <FileText size={15} />
+                        </button>
+                        <button
+                          onClick={() => setEditClient(c)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+                          title="Edit client"
+                        >
+                          <Pencil size={15} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -287,6 +311,13 @@ export default function ClientsPage() {
           drivers={drivers}
           onClose={() => setEditClient(null)}
           onSaved={() => { setEditClient(null); fetchClients(); }}
+        />
+      )}
+
+      {statementClient && (
+        <ClientStatementModal
+          clientId={statementClient.id}
+          onClose={() => { setStatementClient(null); fetchClients(); }}
         />
       )}
     </div>
