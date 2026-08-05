@@ -52,20 +52,12 @@ async function generateInvoice(req, res) {
 
   const clientId = delivery.clientId;
 
-  // Bottles accumulated since last paid invoice
-  const lastPaid = await prisma.invoice.findFirst({
-    where: { clientId, isPaid: true },
-    orderBy: { paidAt: 'desc' },
-  });
-  const since = lastPaid?.paidAt ?? new Date(0);
-
-  const deliveries = await prisma.delivery.findMany({
-    where: { clientId, status: 'COMPLETED', deliveryDate: { gt: since } },
-    select: { filledBottlesDelivered: true },
-  });
-
-  const bottlesTakenSinceLastPaid = deliveries.reduce((s, d) => s + d.filledBottlesDelivered, 0);
-  const totalAmount = parseFloat((bottlesTakenSinceLastPaid * rate).toFixed(2));
+  // Each invoice is scoped to exactly this delivery's own bottles — no
+  // summing across other deliveries. Multiple same-day deliveries each get
+  // their own independent invoice; the consolidated view lives in
+  // getClientStatement.
+  const bottlesForThisInvoice = delivery.filledBottlesDelivered;
+  const totalAmount = parseFloat((bottlesForThisInvoice * rate).toFixed(2));
 
   const invoiceNumber = `INV-${Date.now()}-${clientId}`;
 
@@ -75,21 +67,30 @@ async function generateInvoice(req, res) {
     ? `upi://pay?pa=${upiId}&pn=${encodeURIComponent(bizName)}&am=${totalAmount}&tn=${invoiceNumber}`
     : '';
 
-  const invoice = await prisma.invoice.create({
-    data: {
-      clientId,
-      deliveryId,
-      invoiceNumber,
-      bottlesTakenSinceLastPaid,
-      amountPerBottle: rate,
-      totalAmount,
-      paymentQrData,
-    },
-    include: {
-      client: { select: { id: true, name: true, mobile: true, address: true } },
-      delivery: { select: { id: true, deliveryDate: true, filledBottlesDelivered: true } },
-    },
-  });
+  // Create the invoice and add its total to the client's running balance in
+  // one transaction, so outstandingBalance is always accurate the moment a
+  // delivery is billed — payments only ever subtract from it afterward.
+  const [invoice] = await prisma.$transaction([
+    prisma.invoice.create({
+      data: {
+        clientId,
+        deliveryId,
+        invoiceNumber,
+        bottlesTakenSinceLastPaid: bottlesForThisInvoice,
+        amountPerBottle: rate,
+        totalAmount,
+        paymentQrData,
+      },
+      include: {
+        client: { select: { id: true, name: true, mobile: true, address: true } },
+        delivery: { select: { id: true, deliveryDate: true, filledBottlesDelivered: true } },
+      },
+    }),
+    prisma.client.update({
+      where: { id: clientId },
+      data: { outstandingBalance: { increment: totalAmount } },
+    }),
+  ]);
 
   res.status(201).json(invoice);
 }
@@ -182,6 +183,9 @@ async function markInvoicePaid(req, res) {
   const paymentMethod = req.body?.paymentMethod || 'CASH';
   const totalAmount = parseFloat(invoice.totalAmount);
   const alreadyPaid = parseFloat(invoice.amountPaid);
+  // The invoice's totalAmount was already added to outstandingBalance at
+  // creation time, so paying it off only subtracts the remaining unpaid
+  // portion — it must never add totalAmount again.
   const remainingUnpaid = totalAmount - alreadyPaid;
   const balanceBefore = parseFloat(invoice.client.outstandingBalance);
   const balanceAfter = remainingUnpaid > 0 ? balanceBefore - remainingUnpaid : balanceBefore;
@@ -251,23 +255,54 @@ async function recordPayment(req, res) {
     return res.status(403).json({ error: 'Not authorized for this client' });
   }
 
-  const invoiceTotal = parseFloat(invoice.totalAmount);
+  // outstandingBalance already includes every unpaid invoice's totalAmount
+  // (added at invoice-creation time), so a payment only ever subtracts the
+  // amount actually paid — it must never re-add any invoice total.
   const balanceBefore = parseFloat(invoice.client.outstandingBalance);
-  const newBalance = balanceBefore + invoiceTotal - amount;
-  const isFullyPaid = amount >= invoiceTotal;
+  const newBalance = balanceBefore - amount;
 
-  const [updatedInvoice, updatedClient, payment] = await prisma.$transaction([
-    prisma.invoice.update({
-      where: { id: invoiceId },
-      data: {
-        amountPaid: amount,
-        paymentMethod,
-        ...(isFullyPaid && { isPaid: true, paidAt: new Date() }),
-      },
-      include: {
-        client: { select: { id: true, name: true, mobile: true } },
-      },
-    }),
+  // A single payment can cover more than the anchor invoice (e.g. a client
+  // clearing several same-day deliveries' invoices at once). Apply the
+  // payment across that client's unpaid invoices oldest-first, starting
+  // with the anchor invoice, marking each fully covered invoice paid and
+  // leaving any remainder applied as a partial payment on the next one.
+  const unpaidInvoices = await prisma.invoice.findMany({
+    where: { clientId: invoice.clientId, isPaid: false },
+    orderBy: { createdAt: 'asc' },
+  });
+  const ordered = [
+    invoice,
+    ...unpaidInvoices.filter((i) => i.id !== invoice.id),
+  ].filter((i) => !i.isPaid || i.id === invoice.id);
+
+  let remaining = amount;
+  const invoiceUpdates = [];
+  for (const inv of ordered) {
+    if (remaining <= 0) break;
+    const invTotal = parseFloat(inv.totalAmount);
+    const invAlreadyPaid = parseFloat(inv.amountPaid);
+    const invRemaining = invTotal - invAlreadyPaid;
+    if (invRemaining <= 0) continue;
+
+    const applied = Math.min(remaining, invRemaining);
+    const newInvAmountPaid = invAlreadyPaid + applied;
+    const isFullyPaid = newInvAmountPaid >= invTotal;
+
+    invoiceUpdates.push(
+      prisma.invoice.update({
+        where: { id: inv.id },
+        data: {
+          amountPaid: newInvAmountPaid,
+          paymentMethod,
+          ...(isFullyPaid && { isPaid: true, paidAt: new Date() }),
+        },
+        include: { client: { select: { id: true, name: true, mobile: true } } },
+      }),
+    );
+    remaining -= applied;
+  }
+
+  const [updatedClient, payment, ...updatedInvoices] = await prisma.$transaction([
     prisma.client.update({
       where: { id: invoice.clientId },
       data: { outstandingBalance: newBalance },
@@ -283,13 +318,75 @@ async function recordPayment(req, res) {
         recordedBy: req.user.loginId,
       },
     }),
+    ...invoiceUpdates,
   ]);
+
+  const updatedInvoice = updatedInvoices.find((i) => i.id === invoiceId) ?? updatedInvoices[0];
 
   res.json({
     invoice: updatedInvoice,
+    invoicesUpdated: updatedInvoices,
     client: { outstandingBalance: updatedClient.outstandingBalance },
     payment,
     message: 'Payment recorded successfully',
+  });
+}
+
+// ─── GET /api/invoices/client/:clientId/statement  (ADMIN or assigned DRIVER) ─
+async function getClientStatement(req, res) {
+  const { clientId } = req.params;
+
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+    select: { id: true, name: true, address: true, route: true, ratePerBottle: true, outstandingBalance: true },
+  });
+  if (!client) return res.status(404).json({ error: 'Client not found' });
+  if (!(await canAccessClient(req, clientId))) {
+    return res.status(403).json({ error: 'Not authorized for this client' });
+  }
+
+  const unpaidInvoices = await prisma.invoice.findMany({
+    where: { clientId, isPaid: false },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      delivery: { select: { id: true, deliveryDate: true, filledBottlesDelivered: true } },
+    },
+  });
+
+  const { start, end } = (() => {
+    const s = new Date();
+    s.setHours(0, 0, 0, 0);
+    const e = new Date();
+    e.setHours(23, 59, 59, 999);
+    return { start: s, end: e };
+  })();
+
+  const unpaidDeliveries = unpaidInvoices.map((inv) => ({
+    deliveryId: inv.deliveryId,
+    invoiceId: inv.id,
+    date: inv.delivery.deliveryDate,
+    filledBottles: inv.delivery.filledBottlesDelivered,
+    rate: Number(inv.amountPerBottle),
+    amount: Number(inv.totalAmount),
+    isPaid: inv.isPaid,
+    amountPaid: Number(inv.amountPaid),
+  }));
+
+  const todaysUnpaid = unpaidDeliveries.filter((d) => d.date >= start && d.date <= end);
+  const todaysTotal = todaysUnpaid.reduce((s, d) => s + d.amount, 0);
+  const totalUnpaid = unpaidDeliveries.reduce((s, d) => s + (d.amount - d.amountPaid), 0);
+  const grandTotalDue = Number(client.outstandingBalance);
+  const previousOutstanding = grandTotalDue - todaysTotal;
+
+  res.json({
+    client,
+    unpaidDeliveries,
+    summary: {
+      previousOutstanding,
+      todaysTotal,
+      totalUnpaid,
+      grandTotalDue,
+    },
   });
 }
 
@@ -375,6 +472,7 @@ module.exports = {
   generateInvoice,
   getInvoiceById,
   getClientInvoices,
+  getClientStatement,
   markInvoicePaid,
   recordPayment,
   getAllInvoices,

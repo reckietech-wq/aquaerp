@@ -22,7 +22,6 @@ async function getMyClients(req, res) {
       deliveries: {
         where: { deliveryDate: { gte: start, lte: end } },
         orderBy: { createdAt: 'desc' },
-        take: 1,
       },
       // Most recent past delivery for "last delivery date"
       _count: { select: { deliveries: true } },
@@ -47,18 +46,25 @@ async function getMyClients(req, res) {
     lastDeliveries.map((d) => [d.clientId, { date: d.deliveryDate, bottles: d.filledBottlesDelivered }])
   );
 
-  // Fetch today's invoices for any delivery recorded today
-  const todayDeliveryIds = clients.map((c) => c.deliveries[0]?.id).filter(Boolean);
+  // Fetch today's invoices for every delivery recorded today (not just the
+  // latest one) so multiple same-day deliveries each surface their own
+  // invoice/payment status.
+  const todayDeliveryIds = clients.flatMap((c) => c.deliveries.map((d) => d.id));
   const todayInvoices = todayDeliveryIds.length
     ? await prisma.invoice.findMany({
         where: { deliveryId: { in: todayDeliveryIds } },
-        select: { id: true, deliveryId: true, invoiceNumber: true, totalAmount: true, isPaid: true },
+        select: { id: true, deliveryId: true, invoiceNumber: true, totalAmount: true, isPaid: true, amountPaid: true },
       })
     : [];
   const invoiceByDeliveryId = Object.fromEntries(todayInvoices.map((i) => [i.deliveryId, i]));
 
   const result = clients.map((c) => {
-    const todayDelivery = c.deliveries[0] ?? null;
+    const todayDeliveries = c.deliveries.map((d) => ({
+      ...d,
+      invoice: invoiceByDeliveryId[d.id] ?? null,
+    }));
+    const todayFilledBottles = todayDeliveries.reduce((s, d) => s + d.filledBottlesDelivered, 0);
+    const todayEmptyBottles = todayDeliveries.reduce((s, d) => s + d.emptyBottlesCollected, 0);
     return {
       id: c.id,
       name: c.name,
@@ -71,9 +77,11 @@ async function getMyClients(req, res) {
       totalDeliveries: c._count.deliveries,
       lastDeliveryDate: lastMap[c.id]?.date ?? null,
       lastDeliveryBottles: lastMap[c.id]?.bottles ?? null,
-      todayDelivery,
-      deliveredToday: todayDelivery !== null && todayDelivery.status === 'COMPLETED',
-      todayInvoice: todayDelivery ? (invoiceByDeliveryId[todayDelivery.id] ?? null) : null,
+      todayDeliveries,
+      todayDeliveryCount: todayDeliveries.length,
+      todayFilledBottles,
+      todayEmptyBottles,
+      deliveredToday: todayDeliveries.length > 0,
     };
   });
 

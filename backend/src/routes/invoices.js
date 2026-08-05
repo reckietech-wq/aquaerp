@@ -3,6 +3,7 @@ const {
   generateInvoice,
   getInvoiceById,
   getClientInvoices,
+  getClientStatement,
   markInvoicePaid,
   recordPayment,
   getAllInvoices,
