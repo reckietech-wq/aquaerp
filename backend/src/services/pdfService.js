@@ -7,6 +7,7 @@ const prisma      = require('../lib/prisma');
 // ─── constants ────────────────────────────────────────────────────────────────
 
 const UPLOADS_DIR = path.join(__dirname, '../../uploads/invoices');
+const FALLBACK_QR_PATH = path.join(__dirname, '../../assets/payment-qr.png');
 const BRAND_BLUE  = '#1e3a5f';
 const BRAND_LIGHT = '#e8f0fe';
 const GRAY        = '#64748b';
@@ -66,17 +67,27 @@ async function generateMonthlyInvoicePDF(billId) {
 
   const { client } = bill;
   const invoiceNo  = `BILL-${bill.year}-${String(bill.month).padStart(2, '0')}-${client.id.slice(-6).toUpperCase()}`;
-  const upiId      = process.env.UPI_ID || 'yourbusiness@upi';
+  const upiId      = process.env.BUSINESS_UPI_ID || process.env.UPI_ID || 'yourbusiness@upi';
+  const payeeName  = process.env.BUSINESS_UPI_NAME || process.env.BUSINESS_NAME || 'Gajanan Aqua';
   const bizName    = process.env.BUSINESS_NAME || 'Gajanan Aqua';
-  const upiString  = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(bizName)}&am=${Number(bill.totalAmount).toFixed(2)}&cu=INR&tn=${invoiceNo}`;
+  const upiString  = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(payeeName)}&am=${Number(bill.totalAmount).toFixed(2)}&cu=INR&tn=${invoiceNo}`;
 
   // ── Generate QR buffer ──────────────────────────────────────────────────────
-  const qrBuffer = await QRCode.toBuffer(upiString, {
-    type:  'png',
-    width: 200,
-    margin: 1,
-    color: { dark: '#000000', light: '#ffffff' },
-  });
+  // Prefer a dynamically generated QR carrying the exact bill amount; only
+  // fall back to a static pre-rendered image (backend/assets/payment-qr.png)
+  // if QR generation itself fails, so a bad render never blocks the PDF.
+  let qrBuffer;
+  try {
+    qrBuffer = await QRCode.toBuffer(upiString, {
+      type:  'png',
+      width: 200,
+      margin: 1,
+      color: { dark: '#000000', light: '#ffffff' },
+    });
+  } catch (err) {
+    console.error('[pdfService] QR generation failed, using fallback image:', err.message);
+    qrBuffer = fs.existsSync(FALLBACK_QR_PATH) ? fs.readFileSync(FALLBACK_QR_PATH) : null;
+  }
 
   // ── Build PDF ───────────────────────────────────────────────────────────────
   const outPath = path.join(UPLOADS_DIR, `bill-${billId}.pdf`);
@@ -223,17 +234,22 @@ async function generateMonthlyInvoicePDF(billId) {
     const qrAreaX = 50;
     const qrAreaY = rowY;
 
-    doc.rect(qrAreaX, qrAreaY, 180, 110).fill(BRAND_LIGHT).stroke('#c7d2fe');
+    doc.rect(qrAreaX, qrAreaY, 180, 128).fill(BRAND_LIGHT).stroke('#c7d2fe');
     doc.fillColor(GRAY).fontSize(7).font('Helvetica-Bold')
        .text('SCAN TO PAY', qrAreaX + 55, qrAreaY + 8);
 
-    // Embed QR image
-    doc.image(qrBuffer, qrAreaX + 40, qrAreaY + 18, { width: 80, height: 80 });
+    // Embed QR image (dynamically generated with this bill's exact amount,
+    // or the static fallback image if generation failed above)
+    if (qrBuffer) {
+      doc.image(qrBuffer, qrAreaX + 40, qrAreaY + 18, { width: 80, height: 80 });
+    }
 
-    doc.fillColor(DARK).fontSize(7).font('Helvetica')
-       .text(upiId, qrAreaX + 12, qrAreaY + 100, { width: 156, align: 'center' });
+    doc.fillColor(DARK).fontSize(7).font('Helvetica-Bold')
+       .text(`UPI: ${upiId}`, qrAreaX + 12, qrAreaY + 100, { width: 156, align: 'center' });
+    doc.fillColor(GRAY).fontSize(6).font('Helvetica')
+       .text(payeeName, qrAreaX + 12, qrAreaY + 112, { width: 156, align: 'center' });
 
-    rowY += 120;
+    rowY += 138;
 
     // ── FOOTER ────────────────────────────────────────────────────────────────
     const footerY = Math.max(rowY + 20, doc.page.height - 60);

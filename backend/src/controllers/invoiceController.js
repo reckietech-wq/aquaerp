@@ -62,9 +62,9 @@ async function generateInvoice(req, res) {
   const invoiceNumber = `INV-${Date.now()}-${clientId}`;
 
   const upiId      = process.env.BUSINESS_UPI_ID || process.env.UPI_ID || '';
-  const bizName    = process.env.BUSINESS_NAME || 'Gajanan Aqua';
+  const payeeName  = process.env.BUSINESS_UPI_NAME || process.env.BUSINESS_NAME || 'Gajanan Aqua';
   const paymentQrData = upiId
-    ? `upi://pay?pa=${upiId}&pn=${encodeURIComponent(bizName)}&am=${totalAmount}&tn=${invoiceNumber}`
+    ? `upi://pay?pa=${upiId}&pn=${encodeURIComponent(payeeName)}&am=${totalAmount}&cu=INR&tn=${invoiceNumber}`
     : '';
 
   // Create the invoice and add its total to the client's running balance in
@@ -378,6 +378,12 @@ async function getClientStatement(req, res) {
   const grandTotalDue = Number(client.outstandingBalance);
   const previousOutstanding = grandTotalDue - todaysTotal;
 
+  const upiId     = process.env.BUSINESS_UPI_ID || process.env.UPI_ID || '';
+  const payeeName = process.env.BUSINESS_UPI_NAME || process.env.BUSINESS_NAME || 'Gajanan Aqua';
+  const statementQrData = upiId && grandTotalDue > 0
+    ? `upi://pay?pa=${upiId}&pn=${encodeURIComponent(payeeName)}&am=${grandTotalDue}&cu=INR&tn=STMT-${clientId}`
+    : '';
+
   res.json({
     client,
     unpaidDeliveries,
@@ -386,6 +392,7 @@ async function getClientStatement(req, res) {
       todaysTotal,
       totalUnpaid,
       grandTotalDue,
+      statementQrData,
     },
   });
 }
