@@ -397,6 +397,89 @@ async function getClientStatement(req, res) {
   });
 }
 
+// ─── PUT /api/invoices/:invoiceId/status  (ADMIN only) ───────────────────────
+// Manually corrects an invoice's paid/unpaid state, independent of the normal
+// payment flow. Marking paid behaves like markInvoicePaid (subtracts the
+// remaining unpaid amount from outstandingBalance). Marking unpaid resets
+// amountPaid to 0 and adds the full totalAmount back — a deliberate "undo"
+// for correcting mistakes, not a partial-payment operation.
+async function setInvoiceStatus(req, res) {
+  const { invoiceId } = req.params;
+  const { isPaid } = req.body;
+  if (typeof isPaid !== 'boolean') {
+    return res.status(400).json({ error: 'isPaid (boolean) is required' });
+  }
+
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: { client: true },
+  });
+  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+
+  const totalAmount = parseFloat(invoice.totalAmount);
+  const amountPaid  = parseFloat(invoice.amountPaid);
+  const balanceBefore = parseFloat(invoice.client.outstandingBalance);
+
+  if (isPaid && !invoice.isPaid) {
+    const remainingUnpaid = totalAmount - amountPaid;
+    const balanceAfter = balanceBefore - remainingUnpaid;
+    const [updated] = await prisma.$transaction([
+      prisma.invoice.update({
+        where: { id: invoiceId },
+        data: { isPaid: true, paidAt: new Date(), amountPaid: totalAmount },
+        include: { client: { select: { id: true, name: true, mobile: true, outstandingBalance: true } } },
+      }),
+      prisma.client.update({ where: { id: invoice.clientId }, data: { outstandingBalance: balanceAfter } }),
+    ]);
+    return res.json(updated);
+  }
+
+  if (!isPaid && invoice.isPaid) {
+    const balanceAfter = balanceBefore + totalAmount;
+    const [updated] = await prisma.$transaction([
+      prisma.invoice.update({
+        where: { id: invoiceId },
+        data: { isPaid: false, paidAt: null, amountPaid: 0 },
+        include: { client: { select: { id: true, name: true, mobile: true, outstandingBalance: true } } },
+      }),
+      prisma.client.update({ where: { id: invoice.clientId }, data: { outstandingBalance: balanceAfter } }),
+    ]);
+    return res.json(updated);
+  }
+
+  // No-op: already in the requested state.
+  res.json(invoice);
+}
+
+// ─── DELETE /api/invoices/:invoiceId  (ADMIN only) ───────────────────────────
+// Reverses this invoice's remaining unpaid contribution to outstandingBalance
+// and deletes it. The underlying delivery record is kept — only the invoice
+// (billing document) is removed.
+async function deleteInvoice(req, res) {
+  const { invoiceId } = req.params;
+
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: { client: true },
+  });
+  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+
+  const remainingUnpaid = parseFloat(invoice.totalAmount) - parseFloat(invoice.amountPaid);
+
+  const operations = [prisma.invoice.delete({ where: { id: invoiceId } })];
+  if (remainingUnpaid !== 0) {
+    operations.push(
+      prisma.client.update({
+        where: { id: invoice.clientId },
+        data: { outstandingBalance: { decrement: remainingUnpaid } },
+      }),
+    );
+  }
+
+  await prisma.$transaction(operations);
+  res.json({ message: 'Invoice deleted' });
+}
+
 // ─── GET /api/invoices  (ADMIN only) ─────────────────────────────────────────
 async function getAllInvoices(req, res) {
   const { isPaid, clientId, from, to, search } = req.query;
@@ -482,6 +565,8 @@ module.exports = {
   getClientStatement,
   markInvoicePaid,
   recordPayment,
+  setInvoiceStatus,
+  deleteInvoice,
   getAllInvoices,
   getInvoiceStats,
 };

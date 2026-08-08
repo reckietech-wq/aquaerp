@@ -5,7 +5,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import {
   Search, X, ChevronLeft, ChevronRight,
   Eye, CheckCircle, Clock, Droplets,
-  FileText, IndianRupee, CheckCheck, ReceiptText,
+  FileText, IndianRupee, CheckCheck, ReceiptText, Trash2, RotateCcw,
 } from 'lucide-react';
 import ClientStatementModal from '../../components/ClientStatementModal';
 
@@ -47,6 +47,7 @@ function InvoiceDetailModal({ invoiceId, onClose, onMarkPaid }) {
   const [invoice, setInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const overlayRef = useRef(null);
 
   useEffect(() => {
@@ -70,6 +71,37 @@ function InvoiceDetailModal({ invoiceId, onClose, onMarkPaid }) {
       toast.error(e.response?.data?.error || 'Failed to update invoice');
     } finally {
       setPaying(false);
+    }
+  }
+
+  async function handleMarkUnpaid() {
+    if (!window.confirm('Reset this invoice to unpaid? This undoes the recorded payment and adds the full amount back to the outstanding balance.')) return;
+    setPaying(true);
+    try {
+      await api.put(`/api/invoices/${invoiceId}/status`, { isPaid: false });
+      toast.success('Invoice reset to unpaid');
+      onMarkPaid();
+      onClose();
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Failed to update invoice');
+    } finally {
+      setPaying(false);
+    }
+  }
+
+  async function handleDelete() {
+    const warn = invoice?.isPaid ? ' This invoice is already PAID — deleting it will still reverse its balance contribution correctly, but the payment record stays separate.' : '';
+    if (!window.confirm(`Permanently delete invoice ${invoice?.invoiceNumber}?${warn}`)) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/api/invoices/${invoiceId}`);
+      toast.success('Invoice deleted');
+      onMarkPaid();
+      onClose();
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Failed to delete invoice');
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -269,23 +301,45 @@ function InvoiceDetailModal({ invoiceId, onClose, onMarkPaid }) {
         </div>
 
         {/* Modal footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200">
-          {invoice && !invoice.isPaid && (
+        <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-slate-200">
+          {invoice && (
             <button
-              onClick={handleMarkPaid}
-              disabled={paying}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:opacity-60 transition-colors"
+              onClick={handleDelete}
+              disabled={deleting}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-red-200 text-red-600 text-sm font-medium hover:bg-red-50 disabled:opacity-60 transition-colors"
             >
-              <CheckCheck size={16} />
-              {paying ? 'Updating…' : 'Mark as Paid'}
+              <Trash2 size={15} />
+              {deleting ? 'Deleting…' : 'Delete Invoice'}
             </button>
           )}
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors"
-          >
-            Close
-          </button>
+          <div className="flex items-center gap-3">
+            {invoice && invoice.isPaid && (
+              <button
+                onClick={handleMarkUnpaid}
+                disabled={paying}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg border border-amber-200 text-amber-700 text-sm font-semibold hover:bg-amber-50 disabled:opacity-60 transition-colors"
+              >
+                <RotateCcw size={15} />
+                {paying ? 'Updating…' : 'Reset to Unpaid'}
+              </button>
+            )}
+            {invoice && !invoice.isPaid && (
+              <button
+                onClick={handleMarkPaid}
+                disabled={paying}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:opacity-60 transition-colors"
+              >
+                <CheckCheck size={16} />
+                {paying ? 'Updating…' : 'Mark as Paid'}
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors"
+            >
+              Close
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -589,6 +643,41 @@ export default function InvoicesPage() {
                             <CheckCheck size={15} />
                           </button>
                         )}
+                        {inv.isPaid && (
+                          <button
+                            onClick={async () => {
+                              if (!window.confirm(`Reset invoice ${inv.invoiceNumber} to unpaid? This undoes the recorded payment.`)) return;
+                              try {
+                                await api.put(`/api/invoices/${inv.id}/status`, { isPaid: false });
+                                toast.success('Reset to unpaid');
+                                refreshAll();
+                              } catch (e) {
+                                toast.error(e.response?.data?.error || 'Failed');
+                              }
+                            }}
+                            title="Reset to unpaid"
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-amber-600 hover:bg-amber-50 transition-colors"
+                          >
+                            <RotateCcw size={15} />
+                          </button>
+                        )}
+                        <button
+                          onClick={async () => {
+                            const warn = inv.isPaid ? ' This invoice is already paid.' : '';
+                            if (!window.confirm(`Permanently delete invoice ${inv.invoiceNumber}?${warn}`)) return;
+                            try {
+                              await api.delete(`/api/invoices/${inv.id}`);
+                              toast.success('Invoice deleted');
+                              refreshAll();
+                            } catch (e) {
+                              toast.error(e.response?.data?.error || 'Failed');
+                            }
+                          }}
+                          title="Delete invoice"
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors"
+                        >
+                          <Trash2 size={15} />
+                        </button>
                       </div>
                     </td>
                   </tr>

@@ -115,15 +115,44 @@ async function updateClient(req, res) {
 }
 
 async function deleteClient(req, res) {
-  const client = await prisma.client.findUnique({ where: { id: req.params.id } });
+  const clientId = req.params.id;
+  const client = await prisma.client.findUnique({ where: { id: clientId } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
 
-  await prisma.client.update({
-    where: { id: req.params.id },
-    data: { isActive: false },
-  });
+  const hard = req.query.hard === 'true';
+  if (!hard) {
+    await prisma.client.update({
+      where: { id: clientId },
+      data: { isActive: false },
+    });
+    return res.json({ message: 'Client deactivated' });
+  }
 
-  res.json({ message: 'Client deactivated' });
+  const outstandingBalance = Number(client.outstandingBalance);
+  if (outstandingBalance > 0) {
+    const [deliveryCount, invoiceCount] = await Promise.all([
+      prisma.delivery.count({ where: { clientId } }),
+      prisma.invoice.count({ where: { clientId } }),
+    ]);
+    return res.status(409).json({
+      error: `This client has ${deliveryCount} deliveries and ₹${outstandingBalance.toFixed(2)} outstanding. Clear the balance before deleting.`,
+      deliveryCount,
+      invoiceCount,
+      outstandingBalance,
+    });
+  }
+
+  // Balance is clear — cascade delete every record tied to this client in one
+  // transaction so a partial failure can never leave orphaned deliveries/invoices.
+  await prisma.$transaction([
+    prisma.paymentHistory.deleteMany({ where: { clientId } }),
+    prisma.invoice.deleteMany({ where: { clientId } }),
+    prisma.monthlyBill.deleteMany({ where: { clientId } }),
+    prisma.delivery.deleteMany({ where: { clientId } }),
+    prisma.client.delete({ where: { id: clientId } }),
+  ]);
+
+  res.json({ message: 'Client permanently deleted' });
 }
 
 async function getClientPayments(req, res) {
@@ -138,4 +167,32 @@ async function getClientPayments(req, res) {
   res.json(payments);
 }
 
-module.exports = { createClient, listClients, getClient, updateClient, deleteClient, getClientPayments };
+// ─── DELETE /api/clients/:id/payments/:paymentId  (ADMIN only) ───────────────
+// Reverses a recorded payment's effect on the client's outstandingBalance and
+// removes the ledger entry. Note: this does not retroactively un-apply the
+// payment from whichever invoice(s) it settled (a single payment can cover
+// several invoices via FIFO) — admins should use the invoice status toggle
+// to correct any resulting invoice-level mismatch.
+async function deletePayment(req, res) {
+  const { id: clientId, paymentId } = req.params;
+
+  const payment = await prisma.paymentHistory.findUnique({ where: { id: paymentId } });
+  if (!payment || payment.clientId !== clientId) {
+    return res.status(404).json({ error: 'Payment not found' });
+  }
+
+  const client = await prisma.client.findUnique({ where: { id: clientId } });
+  if (!client) return res.status(404).json({ error: 'Client not found' });
+
+  await prisma.$transaction([
+    prisma.client.update({
+      where: { id: clientId },
+      data: { outstandingBalance: { increment: payment.amountPaid } },
+    }),
+    prisma.paymentHistory.delete({ where: { id: paymentId } }),
+  ]);
+
+  res.json({ message: 'Payment entry deleted and balance reversed' });
+}
+
+module.exports = { createClient, listClients, getClient, updateClient, deleteClient, getClientPayments, deletePayment };

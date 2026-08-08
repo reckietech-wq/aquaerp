@@ -12,14 +12,16 @@ import {
   ChevronLeft,
   ChevronRight,
   Package,
+  PackageCheck,
 } from 'lucide-react';
 import { useState } from 'react';
 
 const navItems = [
-  { to: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/admin/drivers',   label: 'Drivers',   icon: Truck },
-  { to: '/admin/clients',   label: 'Clients',   icon: Users },
-  { to: '/admin/invoices',  label: 'Invoices',  icon: FileText },
+  { to: '/admin/dashboard',  label: 'Dashboard',  icon: LayoutDashboard },
+  { to: '/admin/drivers',    label: 'Drivers',    icon: Truck },
+  { to: '/admin/clients',    label: 'Clients',    icon: Users },
+  { to: '/admin/deliveries', label: 'Deliveries', icon: PackageCheck },
+  { to: '/admin/invoices',   label: 'Invoices',   icon: FileText },
   { to: '/admin/billing',   label: 'Billing',   icon: Receipt   },
   { to: '/admin/inventory', label: 'Inventory', icon: Package   },
   { to: '/admin/reports',   label: 'Reports',   icon: BarChart3 },

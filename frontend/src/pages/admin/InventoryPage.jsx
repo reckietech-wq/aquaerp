@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Package, Plus, Truck, Wrench, TrendingUp, TrendingDown,
   RefreshCw, X, Loader2, ChevronLeft, ChevronRight,
-  AlertTriangle, AlertCircle, Info,
+  AlertTriangle, AlertCircle, Info, Trash2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../lib/api';
@@ -344,6 +344,7 @@ export default function InventoryPage() {
   const [toDate, setToDate]         = useState('');
 
   const [modal, setModal] = useState(null); // 'restock' | 'dispatch' | 'adjust'
+  const [deletingLogId, setDeletingLogId] = useState(null);
 
   const timerRef = useRef(null);
 
@@ -402,6 +403,25 @@ export default function InventoryPage() {
     fetchInventory();
     fetchLogs(1);
     setLogsPage(1);
+  }
+
+  async function handleDeleteLog(log) {
+    const cfg = LOG_TYPES[log.type];
+    if (!confirm(
+      `Delete this ${cfg?.label ?? log.type} log entry (Filled ${log.filledChange >= 0 ? '+' : ''}${log.filledChange}, Empty ${log.emptyChange >= 0 ? '+' : ''}${log.emptyChange})?\n\n` +
+      `This reverses its effect on current stock and cannot be undone.`
+    )) return;
+    setDeletingLogId(log.id);
+    try {
+      await api.delete(`/api/inventory/logs/${log.id}`);
+      toast.success('Log entry reversed and deleted');
+      fetchInventory();
+      fetchLogs(logsPage);
+    } catch (err) {
+      toast.error(err.response?.data?.error ?? 'Failed to delete log entry');
+    } finally {
+      setDeletingLogId(null);
+    }
   }
 
   const totalPages = Math.ceil(logsTotal / PAGE_SIZE);
@@ -545,7 +565,7 @@ export default function InventoryPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50/60">
-                {['Date & Time','Type','Filled Δ','Empty Δ','Filled Balance','Empty Balance','Note','By'].map(h => (
+                {['Date & Time','Type','Filled Δ','Empty Δ','Filled Balance','Empty Balance','Note','By','Actions'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
                     {h}
                   </th>
@@ -556,7 +576,7 @@ export default function InventoryPage() {
               {logsLoading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i} className="animate-pulse">
-                    {Array.from({ length: 8 }).map((_, j) => (
+                    {Array.from({ length: 9 }).map((_, j) => (
                       <td key={j} className="px-4 py-3">
                         <div className="h-4 bg-slate-200 rounded" style={{ width: `${50 + (j * 13) % 40}%` }} />
                       </td>
@@ -565,7 +585,7 @@ export default function InventoryPage() {
                 ))
               ) : logs.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-16 text-slate-400">
+                  <td colSpan={9} className="text-center py-16 text-slate-400">
                     <Package size={32} className="mx-auto mb-2 opacity-30" />
                     <p className="text-sm">No inventory logs yet</p>
                   </td>
@@ -582,6 +602,16 @@ export default function InventoryPage() {
                     <span className="truncate block" title={log.note ?? ''}>{log.note ?? '—'}</span>
                   </td>
                   <td className="px-4 py-3 text-slate-500 text-xs">{log.createdBy}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      onClick={() => handleDeleteLog(log)}
+                      disabled={deletingLogId === log.id}
+                      title="Delete and reverse this entry"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -606,7 +636,16 @@ export default function InventoryPage() {
             <div key={log.id} className="p-4 space-y-2">
               <div className="flex items-center justify-between">
                 <TypeBadge type={log.type} />
-                <span className="text-xs text-slate-400">{fmtDT(log.createdAt)}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400">{fmtDT(log.createdAt)}</span>
+                  <button
+                    onClick={() => handleDeleteLog(log)}
+                    disabled={deletingLogId === log.id}
+                    className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               </div>
               <div className="flex gap-4 text-sm">
                 <span className="text-slate-500">Filled: <ChangeCell value={log.filledChange} /></span>

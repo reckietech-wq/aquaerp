@@ -94,12 +94,45 @@ async function deleteDriver(req, res) {
   const driver = await prisma.driver.findUnique({ where: { id: req.params.id } });
   if (!driver) return res.status(404).json({ error: 'Driver not found' });
 
-  await prisma.driver.update({
-    where: { id: req.params.id },
-    data: { isActive: false },
-  });
+  const hard = req.query.hard === 'true';
+  if (!hard) {
+    await prisma.driver.update({
+      where: { id: req.params.id },
+      data: { isActive: false },
+    });
+    return res.json({ message: 'Driver deactivated' });
+  }
 
-  res.json({ message: 'Driver deactivated' });
+  // Hard delete: permanently removes the driver AND their user login.
+  // Blocked (not cascaded) if they still have assigned clients — Client.assignedDriverId
+  // is a required field in the schema, so clients must be reassigned first rather than
+  // silently nulled out. Also blocked if they have any delivery history, since
+  // Delivery.driverId is required and deleting it would orphan invoices/inventory logs
+  // tied to those deliveries.
+  const [assignedClientCount, deliveryCount] = await Promise.all([
+    prisma.client.count({ where: { assignedDriverId: driver.id, isActive: true } }),
+    prisma.delivery.count({ where: { driverId: driver.id } }),
+  ]);
+
+  if (assignedClientCount > 0) {
+    return res.status(409).json({
+      error: `This driver has ${assignedClientCount} assigned client(s). Reassign clients first.`,
+      assignedClientCount,
+    });
+  }
+  if (deliveryCount > 0) {
+    return res.status(409).json({
+      error: `This driver has ${deliveryCount} delivery record(s) in history. Deactivate instead of deleting to preserve records.`,
+      deliveryCount,
+    });
+  }
+
+  await prisma.$transaction([
+    prisma.driver.delete({ where: { id: driver.id } }),
+    prisma.user.delete({ where: { id: driver.userId } }),
+  ]);
+
+  res.json({ message: 'Driver permanently deleted' });
 }
 
 async function resetPassword(req, res) {

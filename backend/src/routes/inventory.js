@@ -5,6 +5,7 @@ const {
   adminRestock,
   adminDispatchEmpties,
   manualAdjustment,
+  deleteLog,
 } = require('../controllers/inventoryController');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 
@@ -17,5 +18,6 @@ router.get('/logs',               requireAdmin, getLogs);
 router.post('/restock',           requireAdmin, adminRestock);
 router.post('/dispatch-empties',  requireAdmin, adminDispatchEmpties);
 router.post('/adjust',            requireAdmin, manualAdjustment);
+router.delete('/logs/:id',        requireAdmin, deleteLog);
 
 module.exports = router;

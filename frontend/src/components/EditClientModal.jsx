@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { X, AlertTriangle, PackageCheck, MapPin, IndianRupee } from 'lucide-react';
+import { X, AlertTriangle, PackageCheck, MapPin, IndianRupee, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../lib/api';
 
@@ -91,6 +91,7 @@ export default function EditClientModal({ client, drivers, onClose, onSaved }) {
   const [deactivating, setDeactivating] = useState(false);
   const [payments, setPayments] = useState([]);
   const [loadingPayments, setLoadingPayments] = useState(true);
+  const [deletingPaymentId, setDeletingPaymentId] = useState(null);
 
   const activeDrivers = drivers.filter((d) => d.isActive);
 
@@ -168,6 +169,25 @@ export default function EditClientModal({ client, drivers, onClose, onSaved }) {
       toast.error(err.response?.data?.error ?? 'Failed to deactivate');
     } finally {
       setDeactivating(false);
+    }
+  }
+
+  async function handleDeletePayment(payment) {
+    if (!confirm(
+      `Delete this payment of ₹${Number(payment.amountPaid).toFixed(2)}?\n\n` +
+      `This reverses its effect on the outstanding balance and cannot be undone.`
+    )) return;
+    setDeletingPaymentId(payment.id);
+    try {
+      await api.delete(`/api/clients/${client.id}/payments/${payment.id}`);
+      toast.success('Payment deleted, balance reversed');
+      setPayments((prev) => prev.filter((p) => p.id !== payment.id));
+      const { data } = await api.get(`/api/clients/${client.id}`);
+      setDetail(data);
+    } catch (err) {
+      toast.error(err.response?.data?.error ?? 'Failed to delete payment');
+    } finally {
+      setDeletingPaymentId(null);
     }
   }
 
@@ -383,8 +403,8 @@ export default function EditClientModal({ client, drivers, onClose, onSaved }) {
                 <IndianRupee size={15} className="text-slate-400" />
                 Payment History
               </h3>
-              <span className={`text-xs font-semibold ${Number(client.outstandingBalance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                Outstanding: ₹{Number(client.outstandingBalance ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <span className={`text-xs font-semibold ${Number(detail?.outstandingBalance ?? client.outstandingBalance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                Outstanding: ₹{Number(detail?.outstandingBalance ?? client.outstandingBalance ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
 
@@ -416,6 +436,15 @@ export default function EditClientModal({ client, drivers, onClose, onSaved }) {
                       {p.paymentMethod}
                     </span>
                     <span className="text-xs text-slate-400 shrink-0">{fmtDate(p.createdAt)}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleDeletePayment(p)}
+                      disabled={deletingPaymentId === p.id}
+                      title="Delete payment"
+                      className="p-1 rounded-lg text-slate-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors shrink-0"
+                    >
+                      <Trash2 size={13} />
+                    </button>
                   </div>
                 ))}
               </div>

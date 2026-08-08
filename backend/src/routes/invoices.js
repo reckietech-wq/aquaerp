@@ -6,6 +6,8 @@ const {
   getClientStatement,
   markInvoicePaid,
   recordPayment,
+  setInvoiceStatus,
+  deleteInvoice,
   getAllInvoices,
   getInvoiceStats,
 } = require('../controllers/invoiceController');
@@ -24,5 +26,7 @@ router.post('/generate',               requireDriver, generateInvoice);
 router.get('/:invoiceId',                             getInvoiceById);
 router.put('/:invoiceId/mark-paid',                   markInvoicePaid);
 router.put('/:invoiceId/record-payment',              recordPayment);
+router.put('/:invoiceId/status',       requireAdmin,  setInvoiceStatus);
+router.delete('/:invoiceId',           requireAdmin,  deleteInvoice);
 
 module.exports = router;

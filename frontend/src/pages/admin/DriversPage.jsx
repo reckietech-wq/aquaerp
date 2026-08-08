@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Truck, Users, MapPin, Phone, KeyRound } from 'lucide-react';
+import { Plus, Search, Truck, Users, MapPin, Phone, KeyRound, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../lib/api';
 import DriverCredentialsModal from '../../components/DriverCredentialsModal';
@@ -22,7 +22,7 @@ function StatusDot({ isActive }) {
   );
 }
 
-function DriverCard({ driver, onManage, onToggle, toggling }) {
+function DriverCard({ driver, onManage, onToggle, onDelete, toggling, deleting }) {
   const { user, vehicleNumber, vehicleType, route, isActive, _count } = driver;
   return (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 flex flex-col gap-4 hover:shadow-md hover:border-blue-200 transition-all">
@@ -88,6 +88,14 @@ function DriverCard({ driver, onManage, onToggle, toggling }) {
         >
           {toggling === driver.id ? '…' : isActive ? 'Deactivate' : 'Activate'}
         </button>
+        <button
+          onClick={() => onDelete(driver)}
+          disabled={deleting === driver.id}
+          title="Permanently delete driver"
+          className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors"
+        >
+          <Trash2 size={14} />
+        </button>
       </div>
     </div>
   );
@@ -118,6 +126,7 @@ export default function DriversPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [toggling, setToggling] = useState(null);
+  const [deleting, setDeleting] = useState(null);
   const [manageDriver, setManageDriver] = useState(null);
 
   async function fetchDrivers() {
@@ -150,6 +159,23 @@ export default function DriversPage() {
       toast.error(err.response?.data?.error ?? 'Failed to update driver');
     } finally {
       setToggling(null);
+    }
+  }
+
+  async function handleDelete(driver) {
+    if (!confirm(
+      `Permanently delete ${driver.user.name}? This also deletes their login and cannot be undone.\n\n` +
+      `This will be blocked if they still have assigned clients or delivery history.`
+    )) return;
+    setDeleting(driver.id);
+    try {
+      await api.delete(`/api/drivers/${driver.id}?hard=true`);
+      toast.success('Driver permanently deleted');
+      fetchDrivers();
+    } catch (err) {
+      toast.error(err.response?.data?.error ?? 'Failed to delete driver');
+    } finally {
+      setDeleting(null);
     }
   }
 
@@ -210,7 +236,9 @@ export default function DriversPage() {
               driver={d}
               onManage={setManageDriver}
               onToggle={handleToggle}
+              onDelete={handleDelete}
               toggling={toggling}
+              deleting={deleting}
             />
           ))}
         </div>

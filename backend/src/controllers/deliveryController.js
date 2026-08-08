@@ -78,4 +78,181 @@ async function createDelivery(req, res) {
   });
 }
 
-module.exports = { createDelivery };
+// ─── GET /api/deliveries  (ADMIN only) ────────────────────────────────────────
+async function listDeliveries(req, res) {
+  const { clientId, driverId, from, to, search } = req.query;
+  const page  = Math.max(1, parseInt(req.query.page  ?? '1', 10));
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit ?? '20', 10)));
+  const skip  = (page - 1) * limit;
+
+  const where = {};
+  if (clientId) where.clientId = clientId;
+  if (driverId) where.driverId = driverId;
+  if (from || to) {
+    where.deliveryDate = {};
+    if (from) where.deliveryDate.gte = new Date(from);
+    if (to) {
+      const toDate = new Date(to);
+      toDate.setHours(23, 59, 59, 999);
+      where.deliveryDate.lte = toDate;
+    }
+  }
+  if (search) {
+    where.client = {
+      OR: [
+        { name: { contains: search } },
+        { mobile: { contains: search } },
+      ],
+    };
+  }
+
+  const [deliveries, total] = await Promise.all([
+    prisma.delivery.findMany({
+      where,
+      include: {
+        client: { select: { id: true, name: true, mobile: true } },
+        driver: { include: { user: { select: { name: true } } } },
+        invoice: { select: { id: true, invoiceNumber: true, totalAmount: true, isPaid: true, amountPaid: true } },
+      },
+      orderBy: { deliveryDate: 'desc' },
+      skip,
+      take: limit,
+    }),
+    prisma.delivery.count({ where }),
+  ]);
+
+  res.json({ deliveries, total, page, totalPages: Math.ceil(total / limit) });
+}
+
+// ─── PUT /api/deliveries/:id  (ADMIN only) ────────────────────────────────────
+// Corrects bottle counts on an existing delivery. If the delivery already has
+// an invoice, the invoice's totalAmount is recalculated at its own rate and
+// the client's outstandingBalance is adjusted by exactly the difference, so
+// invariant (outstandingBalance == sum of unpaid invoice remainders) holds.
+// Inventory is reversed for the old counts and reapplied for the new ones.
+async function updateDelivery(req, res) {
+  const { id } = req.params;
+  const { filledBottlesDelivered, emptyBottlesCollected, deliveryDate, notes } = req.body;
+
+  const delivery = await prisma.delivery.findUnique({
+    where: { id },
+    include: { invoice: true, client: { select: { name: true } } },
+  });
+  if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
+
+  const newFilled = filledBottlesDelivered != null ? parseInt(filledBottlesDelivered, 10) : delivery.filledBottlesDelivered;
+  const newEmpty  = emptyBottlesCollected  != null ? parseInt(emptyBottlesCollected, 10)  : delivery.emptyBottlesCollected;
+  if (isNaN(newFilled) || newFilled < 0 || isNaN(newEmpty) || newEmpty < 0) {
+    return res.status(400).json({ error: 'filledBottlesDelivered and emptyBottlesCollected must be non-negative numbers' });
+  }
+
+  const filledDelta = newFilled - delivery.filledBottlesDelivered;
+  const emptyDelta  = newEmpty  - delivery.emptyBottlesCollected;
+
+  const operations = [
+    prisma.delivery.update({
+      where: { id },
+      data: {
+        filledBottlesDelivered: newFilled,
+        emptyBottlesCollected:  newEmpty,
+        ...(deliveryDate && { deliveryDate: new Date(deliveryDate) }),
+        ...(notes !== undefined && { notes }),
+      },
+    }),
+  ];
+
+  if (delivery.invoice && filledDelta !== 0) {
+    const rate = Number(delivery.invoice.amountPerBottle);
+    const newTotalAmount = parseFloat((newFilled * rate).toFixed(2));
+    const amountDelta = newTotalAmount - Number(delivery.invoice.totalAmount);
+
+    operations.push(
+      prisma.invoice.update({
+        where: { id: delivery.invoice.id },
+        data: {
+          bottlesTakenSinceLastPaid: newFilled,
+          totalAmount: newTotalAmount,
+        },
+      }),
+      prisma.client.update({
+        where: { id: delivery.clientId },
+        data: { outstandingBalance: { increment: amountDelta } },
+      }),
+    );
+  }
+
+  await prisma.$transaction(operations);
+
+  // Inventory reversal/reapplication happens outside the main transaction
+  // (adjustInventory manages its own), mirroring createDelivery's pattern.
+  if (filledDelta !== 0 || emptyDelta !== 0) {
+    try {
+      await adjustInventory({
+        filledChange: -filledDelta,
+        emptyChange:  +emptyDelta,
+        type:         'MANUAL_ADJUSTMENT',
+        referenceId:  id,
+        note:         `Correction for delivery to ${delivery.client.name}`,
+        createdBy:    req.user.loginId ?? req.user.id,
+      });
+    } catch (err) {
+      console.error('[inventory] adjustment failed after delivery update:', err.message);
+    }
+  }
+
+  const updated = await prisma.delivery.findUnique({
+    where: { id },
+    include: { invoice: true },
+  });
+  res.json(updated);
+}
+
+// ─── DELETE /api/deliveries/:id  (ADMIN only) ─────────────────────────────────
+// Removes the delivery and its linked invoice (if any), reverses the invoice's
+// remaining contribution to outstandingBalance, and reverses the inventory
+// adjustment that was applied when the delivery was created.
+async function deleteDelivery(req, res) {
+  const { id } = req.params;
+
+  const delivery = await prisma.delivery.findUnique({
+    where: { id },
+    include: { invoice: true, client: { select: { name: true } } },
+  });
+  if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
+
+  const operations = [];
+  if (delivery.invoice) {
+    const remainingUnpaid = Number(delivery.invoice.totalAmount) - Number(delivery.invoice.amountPaid);
+    operations.push(
+      prisma.invoice.delete({ where: { id: delivery.invoice.id } }),
+    );
+    if (remainingUnpaid !== 0) {
+      operations.push(
+        prisma.client.update({
+          where: { id: delivery.clientId },
+          data: { outstandingBalance: { decrement: remainingUnpaid } },
+        }),
+      );
+    }
+  }
+  operations.push(prisma.delivery.delete({ where: { id } }));
+
+  await prisma.$transaction(operations);
+
+  try {
+    await adjustInventory({
+      filledChange: +delivery.filledBottlesDelivered,
+      emptyChange:  -delivery.emptyBottlesCollected,
+      type:         'MANUAL_ADJUSTMENT',
+      referenceId:  id,
+      note:         `Reversal for deleted delivery to ${delivery.client.name}`,
+      createdBy:    req.user.loginId ?? req.user.id,
+    });
+  } catch (err) {
+    console.error('[inventory] reversal failed after delivery delete:', err.message);
+  }
+
+  res.json({ message: 'Delivery deleted' });
+}
+
+module.exports = { createDelivery, listDeliveries, updateDelivery, deleteDelivery };

@@ -94,4 +94,38 @@ async function manualAdjustment(req, res) {
   res.json({ message: 'Manual adjustment applied', inventory: inv });
 }
 
-module.exports = { getInventoryHandler, getLogs, adminRestock, adminDispatchEmpties, manualAdjustment };
+// ─── DELETE /api/inventory/logs/:id  (admin only) ─────────────────────────────
+// Reverses the log entry's effect on the live stock totals and removes the
+// entry. Blocked if reversing would push either total negative — that would
+// mean intervening log entries already depend on this one's stock level.
+async function deleteLog(req, res) {
+  const log = await prisma.inventoryLog.findUnique({ where: { id: req.params.id } });
+  if (!log) return res.status(404).json({ error: 'Inventory log not found' });
+
+  const current = await prisma.bottleInventory.findUnique({ where: { id: 1 } });
+  const newFilled = (current?.totalFilledBottles ?? 0) - log.filledChange;
+  const newEmpty  = (current?.totalEmptyBottles  ?? 0) - log.emptyChange;
+
+  if (newFilled < 0 || newEmpty < 0) {
+    return res.status(409).json({
+      error: 'Cannot reverse this entry — it would make stock negative. Later entries depend on it.',
+    });
+  }
+
+  await prisma.$transaction([
+    prisma.bottleInventory.update({
+      where: { id: 1 },
+      data: {
+        totalFilledBottles: newFilled,
+        totalEmptyBottles:  newEmpty,
+        lastUpdatedAt:      new Date(),
+        updatedBy:          req.user.loginId ?? req.user.id,
+      },
+    }),
+    prisma.inventoryLog.delete({ where: { id: req.params.id } }),
+  ]);
+
+  res.json({ message: 'Log entry reversed and deleted' });
+}
+
+module.exports = { getInventoryHandler, getLogs, adminRestock, adminDispatchEmpties, manualAdjustment, deleteLog };

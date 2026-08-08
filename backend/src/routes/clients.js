@@ -1,5 +1,5 @@
 const { Router } = require('express');
-const { createClient, listClients, getClient, updateClient, deleteClient, getClientPayments } = require('../controllers/clientController');
+const { createClient, listClients, getClient, updateClient, deleteClient, getClientPayments, deletePayment } = require('../controllers/clientController');
 const { getClientStatement } = require('../controllers/invoiceController');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 
@@ -16,6 +16,7 @@ router.post('/', createClient);
 router.get('/', listClients);
 router.get('/:id', getClient);
 router.get('/:id/payments', getClientPayments);
+router.delete('/:id/payments/:paymentId', deletePayment);
 router.put('/:id', updateClient);
 router.delete('/:id', deleteClient);
 

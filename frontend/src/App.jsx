@@ -12,6 +12,7 @@ import DriversPage from './pages/admin/DriversPage';
 import AddDriverPage from './pages/admin/AddDriverPage';
 import ClientsPage from './pages/admin/ClientsPage';
 import AddClientPage from './pages/admin/AddClientPage';
+import DeliveriesPage from './pages/admin/DeliveriesPage';
 import InvoicesPage from './pages/admin/InvoicesPage';
 import MonthlyBillingPage from './pages/admin/MonthlyBillingPage';
 import InventoryPage from './pages/admin/InventoryPage';
@@ -53,6 +54,7 @@ export default function App() {
             <Route path="drivers/new" element={<AddDriverPage />} />
             <Route path="clients" element={<ClientsPage />} />
             <Route path="clients/new" element={<AddClientPage />} />
+            <Route path="deliveries" element={<DeliveriesPage />} />
             <Route path="invoices" element={<InvoicesPage />} />
             <Route path="billing"    element={<MonthlyBillingPage />} />
             <Route path="inventory" element={<InventoryPage />} />

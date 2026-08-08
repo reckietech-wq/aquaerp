@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Search, Users, Pencil, MapPin, Phone, FileText } from 'lucide-react';
+import { Plus, Search, Users, Pencil, MapPin, Phone, FileText, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../lib/api';
 import EditClientModal from '../../components/EditClientModal';
@@ -30,7 +30,7 @@ function SkeletonRow() {
   );
 }
 
-function MobileCard({ client, onEdit, onViewStatement }) {
+function MobileCard({ client, onEdit, onViewStatement, onDelete }) {
   return (
     <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 space-y-3">
       <div className="flex items-start justify-between gap-2">
@@ -54,6 +54,13 @@ function MobileCard({ client, onEdit, onViewStatement }) {
             className="p-1.5 rounded-lg text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
           >
             <Pencil size={14} />
+          </button>
+          <button
+            onClick={() => onDelete(client)}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+            title="Delete client"
+          >
+            <Trash2 size={14} />
           </button>
         </div>
       </div>
@@ -86,6 +93,7 @@ export default function ClientsPage() {
   const [filterRoute, setFilterRoute] = useState('');
   const [editClient, setEditClient] = useState(null);
   const [statementClient, setStatementClient] = useState(null);
+  const [deleting, setDeleting] = useState(null);
 
   async function fetchClients() {
     try {
@@ -121,6 +129,29 @@ export default function ClientsPage() {
       return next;
     }, { replace: true });
   }, [clients, searchParams]);
+
+  async function handleDelete(client) {
+    const deliveries = client._count?.deliveries ?? 0;
+    const invoices = client._count?.invoices ?? 0;
+    const balance = Number(client.outstandingBalance ?? 0);
+    const balanceLine = balance > 0
+      ? `\n\nThis client has ₹${balance.toFixed(2)} outstanding — deletion will be blocked until the balance is cleared.`
+      : '';
+    if (!confirm(
+      `Permanently delete ${client.name}?\n\n` +
+      `This has ${deliveries} deliveries and ${invoices} invoices. Deleting removes all their history and cannot be undone.${balanceLine}`
+    )) return;
+    setDeleting(client.id);
+    try {
+      await api.delete(`/api/clients/${client.id}?hard=true`);
+      toast.success('Client permanently deleted');
+      fetchClients();
+    } catch (err) {
+      toast.error(err.response?.data?.error ?? 'Failed to delete client');
+    } finally {
+      setDeleting(null);
+    }
+  }
 
   const routes = useMemo(() => {
     const set = new Set(clients.map((c) => c.route).filter(Boolean));
@@ -209,7 +240,7 @@ export default function ClientsPage() {
           </div>
         ) : (
           filtered.map((c) => (
-            <MobileCard key={c.id} client={c} onEdit={setEditClient} onViewStatement={setStatementClient} />
+            <MobileCard key={c.id} client={c} onEdit={setEditClient} onViewStatement={setStatementClient} onDelete={handleDelete} />
           ))
         )}
       </div>
@@ -295,6 +326,14 @@ export default function ClientsPage() {
                         >
                           <Pencil size={15} />
                         </button>
+                        <button
+                          onClick={() => handleDelete(c)}
+                          disabled={deleting === c.id}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors"
+                          title="Delete client"
+                        >
+                          <Trash2 size={15} />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -309,7 +348,7 @@ export default function ClientsPage() {
         <EditClientModal
           client={editClient}
           drivers={drivers}
-          onClose={() => setEditClient(null)}
+          onClose={() => { setEditClient(null); fetchClients(); }}
           onSaved={() => { setEditClient(null); fetchClients(); }}
         />
       )}
