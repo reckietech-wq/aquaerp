@@ -96,6 +96,7 @@ model Delivery {
   emptyBottlesCollected  Int
   status                 DeliveryStatus @default(PENDING)
   notes                  String?        @db.Text
+  isHistorical           Boolean        @default(false)
   createdAt              DateTime       @default(now())
 
   client  Client   @relation(fields: [clientId], references: [id])
@@ -138,6 +139,7 @@ model Invoice {
   amountPaid                Decimal   @default(0) @db.Decimal(10, 2)
   paymentMethod             String?
   paymentQrData             String?   @db.Text
+  isHistorical              Boolean   @default(false)
   createdAt                 DateTime  @default(now())
 
   client   Client   @relation(fields: [clientId], references: [id])
@@ -154,6 +156,7 @@ model PaymentHistory {
   balanceBefore Decimal  @db.Decimal(10, 2)
   balanceAfter  Decimal  @db.Decimal(10, 2)
   recordedBy    String
+  note          String?  @db.Text
   createdAt     DateTime @default(now())
 }
 

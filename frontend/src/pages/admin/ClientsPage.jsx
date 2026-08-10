@@ -1,10 +1,11 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Search, Users, Pencil, MapPin, Phone, FileText, Trash2 } from 'lucide-react';
+import { Plus, Search, Users, Pencil, MapPin, Phone, FileText, Trash2, History } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../lib/api';
 import EditClientModal from '../../components/EditClientModal';
 import ClientStatementModal from '../../components/ClientStatementModal';
+import ClientHistoryModal from '../../components/ClientHistoryModal';
 
 function StatusBadge({ isActive }) {
   return (
@@ -30,7 +31,7 @@ function SkeletonRow() {
   );
 }
 
-function MobileCard({ client, onEdit, onViewStatement, onDelete }) {
+function MobileCard({ client, onEdit, onViewStatement, onViewHistory, onDelete }) {
   return (
     <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 space-y-3">
       <div className="flex items-start justify-between gap-2">
@@ -48,6 +49,13 @@ function MobileCard({ client, onEdit, onViewStatement, onDelete }) {
             title="View statement"
           >
             <FileText size={14} />
+          </button>
+          <button
+            onClick={() => onViewHistory(client)}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+            title="Manage past records"
+          >
+            <History size={14} />
           </button>
           <button
             onClick={() => onEdit(client)}
@@ -93,6 +101,7 @@ export default function ClientsPage() {
   const [filterRoute, setFilterRoute] = useState('');
   const [editClient, setEditClient] = useState(null);
   const [statementClient, setStatementClient] = useState(null);
+  const [historyClient, setHistoryClient] = useState(null);
   const [deleting, setDeleting] = useState(null);
 
   async function fetchClients() {
@@ -240,7 +249,7 @@ export default function ClientsPage() {
           </div>
         ) : (
           filtered.map((c) => (
-            <MobileCard key={c.id} client={c} onEdit={setEditClient} onViewStatement={setStatementClient} onDelete={handleDelete} />
+            <MobileCard key={c.id} client={c} onEdit={setEditClient} onViewStatement={setStatementClient} onViewHistory={setHistoryClient} onDelete={handleDelete} />
           ))
         )}
       </div>
@@ -320,6 +329,13 @@ export default function ClientsPage() {
                           <FileText size={15} />
                         </button>
                         <button
+                          onClick={() => setHistoryClient(c)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+                          title="Manage past records"
+                        >
+                          <History size={15} />
+                        </button>
+                        <button
                           onClick={() => setEditClient(c)}
                           className="p-1.5 rounded-lg text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
                           title="Edit client"
@@ -357,6 +373,13 @@ export default function ClientsPage() {
         <ClientStatementModal
           clientId={statementClient.id}
           onClose={() => { setStatementClient(null); fetchClients(); }}
+        />
+      )}
+
+      {historyClient && (
+        <ClientHistoryModal
+          client={historyClient}
+          onClose={() => { setHistoryClient(null); fetchClients(); }}
         />
       )}
     </div>

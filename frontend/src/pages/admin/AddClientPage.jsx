@@ -80,6 +80,29 @@ export default function AddClientPage() {
         route: data.route,
         ratePerBottle: data.ratePerBottle,
       });
+
+      const openingBalance = parseFloat(data.openingBalance);
+      if (!isNaN(openingBalance) && openingBalance > 0) {
+        // The historical-record endpoint is bottle-count based, so convert the
+        // rupee opening balance into an equivalent bottle count at this
+        // client's rate — that's the closest fit without a separate raw-amount
+        // historical entry type.
+        const rate = data.ratePerBottle;
+        const bottlesEquivalent = Math.round(openingBalance / rate);
+        try {
+          await api.post(`/api/clients/${res.data.id}/historical-record`, {
+            date: new Date().toISOString().slice(0, 10),
+            bottlesDelivered: bottlesEquivalent || 1,
+            ratePerBottle: rate,
+            amountPaid: 0,
+            paymentMethod: null,
+            note: 'Opening balance at client creation',
+          });
+        } catch (histErr) {
+          toast.error(histErr.response?.data?.error ?? 'Client created, but opening balance entry failed — add it manually via Past Records');
+        }
+      }
+
       const driverName =
         drivers.find((d) => d.id === data.assignedDriverId)?.user?.name ?? 'selected driver';
       setCreated({ name: res.data.name, driverName });
@@ -263,6 +286,22 @@ export default function AddClientPage() {
                   min: { value: 0, message: 'Rate must be positive' },
                 })}
               />
+            </Field>
+            <Field label="Opening Balance (₹)" error={errors.openingBalance?.message}>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="optional — past dues carried over"
+                hasError={!!errors.openingBalance}
+                {...register('openingBalance', {
+                  min: { value: 0, message: 'Must be positive' },
+                })}
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                If this client owes money from before the system started, enter it here — it'll be
+                recorded as a historical record you can review under "Past Records".
+              </p>
             </Field>
           </div>
 

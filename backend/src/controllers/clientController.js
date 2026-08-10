@@ -195,4 +195,188 @@ async function deletePayment(req, res) {
   res.json({ message: 'Payment entry deleted and balance reversed' });
 }
 
-module.exports = { createClient, listClients, getClient, updateClient, deleteClient, getClientPayments, deletePayment };
+// ─── POST /api/clients/:clientId/historical-record  (ADMIN only) ─────────────
+// Backdates a delivery + invoice (and optional payment) for data that existed
+// before the system went live, so outstanding balances reflect real history.
+// Inventory is intentionally untouched — no real stock moved.
+async function addHistoricalRecord(req, res) {
+  const { clientId } = req.params;
+  const { date, bottlesDelivered, ratePerBottle, amountPaid, paymentMethod, note } = req.body;
+
+  const client = await prisma.client.findUnique({ where: { id: clientId } });
+  if (!client) return res.status(404).json({ error: 'Client not found' });
+
+  const bottles = parseInt(bottlesDelivered, 10);
+  if (!date || isNaN(bottles) || bottles <= 0) {
+    return res.status(400).json({ error: 'date and a positive bottlesDelivered are required' });
+  }
+  const rate = ratePerBottle != null ? parseFloat(ratePerBottle) : Number(client.ratePerBottle);
+  if (isNaN(rate) || rate <= 0) {
+    return res.status(400).json({ error: 'A valid ratePerBottle is required' });
+  }
+  const paid = amountPaid != null ? parseFloat(amountPaid) : 0;
+  if (isNaN(paid) || paid < 0) {
+    return res.status(400).json({ error: 'amountPaid must be a non-negative number' });
+  }
+
+  const deliveryDate = new Date(date);
+  const totalAmount = parseFloat((bottles * rate).toFixed(2));
+  const remaining = parseFloat((totalAmount - paid).toFixed(2));
+
+  const balanceBefore = Number(client.outstandingBalance);
+  const balanceAfter = balanceBefore + remaining;
+
+  const invoiceNumber = `HIST-${Date.now()}-${clientId}`;
+
+  // Delivery must exist before the invoice can reference its id, so it's
+  // created first in its own transaction, then the invoice + balance +
+  // payment history follow in a second.
+  const [delivery] = await prisma.$transaction([
+    prisma.delivery.create({
+      data: {
+        clientId,
+        driverId: client.assignedDriverId,
+        filledBottlesDelivered: bottles,
+        emptyBottlesCollected: 0,
+        deliveryDate,
+        status: 'COMPLETED',
+        isHistorical: true,
+        notes: note || null,
+      },
+    }),
+  ]);
+
+  const invoiceOps = [
+    prisma.invoice.create({
+      data: {
+        clientId,
+        deliveryId: delivery.id,
+        invoiceNumber,
+        bottlesTakenSinceLastPaid: bottles,
+        amountPerBottle: rate,
+        totalAmount,
+        amountPaid: paid,
+        isPaid: remaining <= 0,
+        paidAt: remaining <= 0 ? deliveryDate : null,
+        paymentMethod: paymentMethod || null,
+        isHistorical: true,
+        createdAt: deliveryDate,
+      },
+    }),
+    prisma.client.update({
+      where: { id: clientId },
+      data: { outstandingBalance: balanceAfter },
+    }),
+  ];
+
+  const [invoice, updatedClient] = await prisma.$transaction(invoiceOps);
+
+  if (paid > 0) {
+    await prisma.paymentHistory.create({
+      data: {
+        clientId,
+        invoiceId: invoice.id,
+        amountPaid: paid,
+        paymentMethod: paymentMethod || 'CASH',
+        balanceBefore,
+        balanceAfter,
+        recordedBy: req.user.loginId ?? req.user.id,
+        createdAt: deliveryDate,
+        note: `Historical: ${note || 'opening entry'}`,
+      },
+    });
+  }
+
+  res.status(201).json({
+    delivery,
+    invoice,
+    outstandingBalance: updatedClient.outstandingBalance,
+  });
+}
+
+// ─── GET /api/clients/:clientId/historical-record  (ADMIN only) ──────────────
+async function getClientHistoricalRecords(req, res) {
+  const { clientId } = req.params;
+  const client = await prisma.client.findUnique({ where: { id: clientId } });
+  if (!client) return res.status(404).json({ error: 'Client not found' });
+
+  const invoices = await prisma.invoice.findMany({
+    where: { clientId, isHistorical: true },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      delivery: { select: { id: true, deliveryDate: true, filledBottlesDelivered: true, notes: true } },
+    },
+  });
+
+  res.json(invoices);
+}
+
+// ─── DELETE /api/clients/:clientId/historical-record/:invoiceId  (ADMIN only) ─
+async function deleteHistoricalRecord(req, res) {
+  const { clientId, invoiceId } = req.params;
+
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: { client: true },
+  });
+  if (!invoice || invoice.clientId !== clientId || !invoice.isHistorical) {
+    return res.status(404).json({ error: 'Historical record not found' });
+  }
+
+  const remainingUnpaid = Number(invoice.totalAmount) - Number(invoice.amountPaid);
+
+  await prisma.$transaction([
+    prisma.paymentHistory.deleteMany({ where: { clientId, invoiceId: invoice.id } }),
+    prisma.invoice.delete({ where: { id: invoiceId } }),
+    prisma.delivery.delete({ where: { id: invoice.deliveryId } }),
+    prisma.client.update({
+      where: { id: clientId },
+      data: { outstandingBalance: { decrement: remainingUnpaid } },
+    }),
+  ]);
+
+  res.json({ message: 'Historical record deleted and balance reversed' });
+}
+
+// ─── GET /api/clients/:clientId/summary  (ADMIN only) ─────────────────────────
+async function getClientSummary(req, res) {
+  const { clientId } = req.params;
+  const client = await prisma.client.findUnique({ where: { id: clientId } });
+  if (!client) return res.status(404).json({ error: 'Client not found' });
+
+  const [bottlesAgg, invoiceAgg, historicalCount, liveCount] = await Promise.all([
+    prisma.delivery.aggregate({
+      where: { clientId },
+      _sum: { filledBottlesDelivered: true },
+    }),
+    prisma.invoice.aggregate({
+      where: { clientId },
+      _sum: { totalAmount: true, amountPaid: true },
+    }),
+    prisma.delivery.count({ where: { clientId, isHistorical: true } }),
+    prisma.delivery.count({ where: { clientId, isHistorical: false } }),
+  ]);
+
+  res.json({
+    totalBottlesDelivered: bottlesAgg._sum.filledBottlesDelivered ?? 0,
+    totalAmountBilled: Number(invoiceAgg._sum.totalAmount ?? 0),
+    totalPaid: Number(invoiceAgg._sum.amountPaid ?? 0),
+    outstandingBalance: Number(client.outstandingBalance),
+    historicalCount,
+    liveCount,
+  });
+}
+
+module.exports = {
+  createClient,
+  listClients,
+  getClient,
+  updateClient,
+  deleteClient,
+  getClientPayments,
+  deletePayment,
+  addHistoricalRecord,
+  getClientHistoricalRecords,
+  deleteHistoricalRecord,
+  getClientSummary,
+};

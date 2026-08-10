@@ -1,5 +1,8 @@
 const { Router } = require('express');
-const { createClient, listClients, getClient, updateClient, deleteClient, getClientPayments, deletePayment } = require('../controllers/clientController');
+const {
+  createClient, listClients, getClient, updateClient, deleteClient, getClientPayments, deletePayment,
+  addHistoricalRecord, getClientHistoricalRecords, deleteHistoricalRecord, getClientSummary,
+} = require('../controllers/clientController');
 const { getClientStatement } = require('../controllers/invoiceController');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 
@@ -17,6 +20,10 @@ router.get('/', listClients);
 router.get('/:id', getClient);
 router.get('/:id/payments', getClientPayments);
 router.delete('/:id/payments/:paymentId', deletePayment);
+router.get('/:clientId/summary', getClientSummary);
+router.post('/:clientId/historical-record', addHistoricalRecord);
+router.get('/:clientId/historical-record', getClientHistoricalRecords);
+router.delete('/:clientId/historical-record/:invoiceId', deleteHistoricalRecord);
 router.put('/:id', updateClient);
 router.delete('/:id', deleteClient);
 
