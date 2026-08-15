@@ -540,22 +540,130 @@ async function getAllInvoices(req, res) {
   });
 }
 
+// ─── GET /api/invoices/by-client  (ADMIN only) ────────────────────────────────
+// Consolidated view: one row per client with aggregated invoice totals,
+// instead of one row per invoice. outstandingBalance is always read straight
+// off the Client record (the single source of truth maintained by
+// generateInvoice/recordPayment/etc) — never summed from invoices, so it
+// can't drift out of sync or get double-counted across rows.
+async function getInvoicesByClient(req, res) {
+  const { status, from, to, search, clientId } = req.query;
+  const page  = Math.max(1, parseInt(req.query.page  ?? '1', 10));
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit ?? '20', 10)));
+
+  const invoiceWhere = {};
+  if (from || to) {
+    invoiceWhere.createdAt = {};
+    if (from) invoiceWhere.createdAt.gte = new Date(from);
+    if (to) {
+      const toDate = new Date(to);
+      toDate.setHours(23, 59, 59, 999);
+      invoiceWhere.createdAt.lte = toDate;
+    }
+  }
+
+  const clientWhere = {
+    ...(clientId && { id: clientId }),
+    ...(search && {
+      OR: [
+        { name: { contains: search } },
+        { mobile: { contains: search } },
+      ],
+    }),
+    invoices: { some: invoiceWhere },
+  };
+
+  const clients = await prisma.client.findMany({
+    where: clientWhere,
+    include: {
+      assignedDriver: { select: { user: { select: { name: true } } } },
+      invoices: {
+        where: invoiceWhere,
+        select: {
+          id: true,
+          totalAmount: true,
+          amountPaid: true,
+          delivery: { select: { filledBottlesDelivered: true } },
+        },
+      },
+    },
+    orderBy: { name: 'asc' },
+  });
+
+  let rows = clients.map((c) => {
+    const invoiceCount = c.invoices.length;
+    const totalBottles = c.invoices.reduce((s, i) => s + (i.delivery?.filledBottlesDelivered ?? 0), 0);
+    const totalBilled  = c.invoices.reduce((s, i) => s + Number(i.totalAmount), 0);
+    const totalPaid    = c.invoices.reduce((s, i) => s + Number(i.amountPaid), 0);
+    const outstandingBalance = Number(c.outstandingBalance);
+
+    let rowStatus;
+    if (outstandingBalance <= 0) rowStatus = 'PAID';
+    else if (totalPaid > 0) rowStatus = 'PARTIAL';
+    else rowStatus = 'UNPAID';
+
+    return {
+      clientId: c.id,
+      clientName: c.name,
+      driverName: c.assignedDriver?.user?.name ?? '—',
+      invoiceCount,
+      totalBottles,
+      totalBilled,
+      totalPaid,
+      outstandingBalance,
+      status: rowStatus,
+    };
+  });
+
+  if (status === 'paid') rows = rows.filter((r) => r.status === 'PAID');
+  if (status === 'unpaid') rows = rows.filter((r) => r.status === 'UNPAID' || r.status === 'PARTIAL');
+
+  const total = rows.length;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const skip = (page - 1) * limit;
+  const paged = rows.slice(skip, skip + limit);
+
+  res.json({ clients: paged, total, page, totalPages });
+}
+
 // ─── GET /api/invoices/stats  (ADMIN only) ───────────────────────────────────
 async function getInvoiceStats(req, res) {
-  const [total, unpaidAgg] = await Promise.all([
+  const [total, unpaidAgg, paidAgg, clientsWithInvoices, outstandingAgg] = await Promise.all([
     prisma.invoice.count(),
     prisma.invoice.aggregate({
       where: { isPaid: false },
       _count: { id: true },
       _sum: { totalAmount: true },
     }),
+    prisma.invoice.aggregate({
+      _sum: { amountPaid: true },
+    }),
+    prisma.client.count({ where: { invoices: { some: {} } } }),
+    // outstandingBalance is per-client, not per-invoice — sum it once per
+    // client (across clients that actually have invoices) rather than
+    // summing unpaid invoice totals, which would double-count nothing here
+    // but drift from the authoritative Client.outstandingBalance ledger.
+    prisma.client.aggregate({
+      where: { invoices: { some: {} } },
+      _sum: { outstandingBalance: true },
+    }),
   ]);
 
   const unpaid      = unpaidAgg._count.id;
   const paid        = total - unpaid;
   const outstanding = Number(unpaidAgg._sum.totalAmount ?? 0);
+  const totalCollected = Number(paidAgg._sum.amountPaid ?? 0);
+  const totalOutstanding = Number(outstandingAgg._sum.outstandingBalance ?? 0);
 
-  res.json({ total, paid, unpaid, outstanding });
+  res.json({
+    total,
+    paid,
+    unpaid,
+    outstanding,
+    clientsWithInvoices,
+    totalOutstanding,
+    totalCollected,
+  });
 }
 
 module.exports = {
@@ -568,5 +676,6 @@ module.exports = {
   setInvoiceStatus,
   deleteInvoice,
   getAllInvoices,
+  getInvoicesByClient,
   getInvoiceStats,
 };

@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
-import { X, Droplets, Printer, IndianRupee, CheckCircle, Clock } from 'lucide-react';
+import { X, Droplets, Printer, IndianRupee, CheckCircle, Clock, Eye } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../lib/api';
+import InvoiceDetailModal from './InvoiceDetailModal';
 
 function fmt(n) {
   return Number(n ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -48,6 +49,7 @@ export default function ClientStatementModal({ clientId, onClose }) {
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState('CASH');
   const [paying, setPaying] = useState(false);
+  const [detailInvoiceId, setDetailInvoiceId] = useState(null);
   const overlayRef = useRef(null);
 
   async function fetchStatement() {
@@ -181,13 +183,14 @@ export default function ClientStatementModal({ clientId, onClose }) {
                         <th className="pb-2 pr-3 font-medium text-right">Qty</th>
                         <th className="pb-2 pr-3 font-medium text-right">Rate</th>
                         <th className="pb-2 pr-3 font-medium text-right">Amount</th>
-                        <th className="pb-2 font-medium">Status</th>
+                        <th className="pb-2 pr-3 font-medium">Status</th>
+                        <th className="pb-2 font-medium print:hidden">Detail</th>
                       </tr>
                     </thead>
                     <tbody>
                       {statement.unpaidDeliveries.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="py-6 text-center text-slate-400">
+                          <td colSpan={8} className="py-6 text-center text-slate-400">
                             No unpaid deliveries — all clear!
                           </td>
                         </tr>
@@ -200,8 +203,17 @@ export default function ClientStatementModal({ clientId, onClose }) {
                             <td className="py-2.5 pr-3 text-right text-slate-800 font-medium">{d.filledBottles}</td>
                             <td className="py-2.5 pr-3 text-right text-slate-600">₹{fmt(d.rate)}</td>
                             <td className="py-2.5 pr-3 text-right text-slate-800 font-semibold">₹{fmt(d.amount)}</td>
-                            <td className="py-2.5">
+                            <td className="py-2.5 pr-3">
                               <DeliveryStatusBadge isPaid={d.isPaid} amountPaid={d.amountPaid} amount={d.amount} />
+                            </td>
+                            <td className="py-2.5 print:hidden">
+                              <button
+                                onClick={() => setDetailInvoiceId(d.invoiceId)}
+                                title="View invoice detail"
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                              >
+                                <Eye size={14} />
+                              </button>
                             </td>
                           </tr>
                         ))
@@ -305,6 +317,14 @@ export default function ClientStatementModal({ clientId, onClose }) {
           </button>
         </div>
       </div>
+
+      {detailInvoiceId && (
+        <InvoiceDetailModal
+          invoiceId={detailInvoiceId}
+          onClose={() => setDetailInvoiceId(null)}
+          onChanged={fetchStatement}
+        />
+      )}
     </div>
   );
 }
