@@ -12,13 +12,17 @@ function errorHandler(err, req, res, next) {
   }
 
   const status = err.status || err.statusCode || 500;
-  const message = err.message || 'Internal Server Error';
 
   if (status >= 500) {
+    // Log full detail server-side, but never leak internal error messages
+    // (stack traces, raw DB/ORM errors) to the client on unexpected failures
+    // — only deliberately-thrown, controller-authored 4xx errors get their
+    // message passed through below.
     console.error('[ERROR]', err.stack ?? err);
+    return res.status(status).json({ error: 'Internal Server Error' });
   }
 
-  res.status(status).json({ error: message });
+  res.status(status).json({ error: err.message || 'Internal Server Error' });
 }
 
 module.exports = errorHandler;

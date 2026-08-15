@@ -28,7 +28,13 @@ async function getSummary(req, res) {
   const invoiceWhere  = { createdAt:    { gte: start, lte: end } };
 
   // ── Top-level stats ──────────────────────────────────────────────────────
-  const [totalDeliveries, bottleAgg, revenueAgg, paidRevenueAgg, clientCount] =
+  // "Collected" is SUM(amountPaid) across every invoice in the period, not
+  // SUM(totalAmount) restricted to isPaid:true — the latter silently drops
+  // partially-paid invoices' collected amount entirely (undercounting cash
+  // actually taken) and double-counts their full total as "outstanding".
+  // paidInvoiceCount (a count, not a money figure) still legitimately means
+  // "invoices fully closed" and is fetched separately.
+  const [totalDeliveries, bottleAgg, revenueAgg, paidInvoiceCount, clientCount] =
     await Promise.all([
       prisma.delivery.count({ where: deliveryWhere }),
       prisma.delivery.aggregate({
@@ -37,14 +43,10 @@ async function getSummary(req, res) {
       }),
       prisma.invoice.aggregate({
         where: invoiceWhere,
-        _sum: { totalAmount: true },
+        _sum: { totalAmount: true, amountPaid: true },
         _count: { id: true },
       }),
-      prisma.invoice.aggregate({
-        where: { ...invoiceWhere, isPaid: true },
-        _sum: { totalAmount: true },
-        _count: { id: true },
-      }),
+      prisma.invoice.count({ where: { ...invoiceWhere, isPaid: true } }),
       prisma.delivery.findMany({
         where: deliveryWhere,
         select: { clientId: true },
@@ -53,10 +55,10 @@ async function getSummary(req, res) {
     ]);
 
   const totalBottles  = bottleAgg._sum.filledBottlesDelivered ?? 0;
-  const totalRevenue  = parseFloat(revenueAgg._sum.totalAmount   ?? 0);
-  const paidRevenue   = parseFloat(paidRevenueAgg._sum.totalAmount ?? 0);
+  const totalRevenue  = parseFloat(revenueAgg._sum.totalAmount  ?? 0);
+  const paidRevenue   = parseFloat(revenueAgg._sum.amountPaid   ?? 0);
   const totalInvoices = revenueAgg._count.id;
-  const paidInvoices  = paidRevenueAgg._count.id;
+  const paidInvoices  = paidInvoiceCount;
 
   // ── Driver breakdown ─────────────────────────────────────────────────────
   // Group deliveries by driverId
@@ -144,17 +146,19 @@ async function getSummary(req, res) {
   });
   const clientMap = Object.fromEntries(clientInfos.map(c => [c.id, c]));
 
-  // Invoice totals per client in period
+  // Invoice totals per client in period. "Paid" is SUM(amountPaid) across ALL
+  // of that client's invoices in the period (captures partial payments) —
+  // paidCount (a count of fully-closed invoices) is fetched separately since
+  // it's a genuinely different, isPaid-based metric.
   const clientInvoices = await prisma.invoice.groupBy({
     by:    ['clientId'],
     where: invoiceWhere,
-    _sum:  { totalAmount: true },
+    _sum:  { totalAmount: true, amountPaid: true },
     _count: { id: true },
   });
   const clientPaidInvoices = await prisma.invoice.groupBy({
     by:    ['clientId'],
     where: { ...invoiceWhere, isPaid: true },
-    _sum:  { totalAmount: true },
     _count: { id: true },
   });
   const clientInvMap     = Object.fromEntries(clientInvoices.map(r => [r.clientId, r]));
@@ -163,8 +167,8 @@ async function getSummary(req, res) {
   const clientBreakdown = clientDeliveries
     .map(row => {
       const info         = clientMap[row.clientId];
-      const invTotal     = parseFloat(clientInvMap[row.clientId]?._sum?.totalAmount     ?? 0);
-      const paidTotal    = parseFloat(clientPaidInvMap[row.clientId]?._sum?.totalAmount ?? 0);
+      const invTotal     = parseFloat(clientInvMap[row.clientId]?._sum?.totalAmount ?? 0);
+      const paidTotal    = parseFloat(clientInvMap[row.clientId]?._sum?.amountPaid  ?? 0);
       const invCount     = clientInvMap[row.clientId]?._count?.id     ?? 0;
       const paidCount    = clientPaidInvMap[row.clientId]?._count?.id ?? 0;
       const outstanding  = invTotal - paidTotal;
@@ -203,8 +207,8 @@ async function getSummary(req, res) {
         _sum:  { filledBottlesDelivered: true },
       }),
       prisma.invoice.aggregate({
-        where: { createdAt: { gte: mStart, lte: mEnd }, isPaid: true },
-        _sum:  { totalAmount: true },
+        where: { createdAt: { gte: mStart, lte: mEnd } },
+        _sum:  { amountPaid: true },
       }),
       prisma.delivery.findMany({
         where:  { deliveryDate: { gte: mStart, lte: mEnd }, status: 'COMPLETED' },
@@ -218,7 +222,7 @@ async function getSummary(req, res) {
       year:         mStart.getFullYear(),
       deliveries:   mDeliveries,
       bottles:      mBottles._sum.filledBottlesDelivered ?? 0,
-      revenue:      parseFloat(mRevenue._sum.totalAmount ?? 0),
+      revenue:      parseFloat(mRevenue._sum.amountPaid ?? 0),
       clientsServed: mClients,
     });
   }
@@ -299,7 +303,10 @@ async function getClientSummary(req, res) {
           select: { deliveryDate: true, filledBottlesDelivered: true },
         }),
         prisma.invoice.aggregate({ where: invoiceWhere, _sum: { totalAmount: true } }),
-        prisma.invoice.aggregate({ where: { ...invoiceWhere, isPaid: true }, _sum: { totalAmount: true } }),
+        // Paid = SUM(amountPaid) across ALL of this client's invoices in
+        // range, not SUM(totalAmount) restricted to isPaid:true — captures
+        // partial payments correctly.
+        prisma.invoice.aggregate({ where: invoiceWhere, _sum: { amountPaid: true } }),
         prisma.delivery.findFirst({
           where: { clientId: c.id, status: 'COMPLETED' },
           orderBy: { deliveryDate: 'desc' },
@@ -309,7 +316,7 @@ async function getClientSummary(req, res) {
 
       const totalBottles = deliveries.reduce((s, d) => s + d.filledBottlesDelivered, 0);
       const totalBilled = parseFloat(invAgg._sum.totalAmount ?? 0);
-      const paid = parseFloat(paidAgg._sum.totalAmount ?? 0);
+      const paid = parseFloat(paidAgg._sum.amountPaid ?? 0);
       const unpaid = totalBilled - paid;
 
       // Monthly breakdown (bottles + billed, grouped by month/year within range)

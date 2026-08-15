@@ -10,40 +10,52 @@ async function getInventory() {
   });
 }
 
-async function adjustInventory({ filledChange, emptyChange, type, referenceId = null, note = null, createdBy }) {
-  const current = await getInventory();
+// Atomic stock adjustment — uses Prisma's `increment` (a single DB-level
+// UPDATE ... SET x = x + delta) instead of read-then-write, so concurrent
+// callers can't clobber each other's changes: MySQL row-locks the update for
+// the duration of the transaction, serializing concurrent adjustments rather
+// than losing one silently.
+//
+// Pass `tx` (a Prisma interactive-transaction client) to run this as part of
+// a larger transaction — e.g. delivery creation — so a negative-stock throw
+// here rolls back the whole caller transaction, not just the inventory half.
+// If `tx` is omitted, the update + log write are wrapped in their own
+// transaction so they can't land inconsistently with each other.
+async function adjustInventory({ filledChange, emptyChange, type, referenceId = null, note = null, createdBy, tx }) {
+  await getInventory(); // ensure the singleton row exists — safe outside any tx (idempotent upsert)
 
-  const newFilled = current.totalFilledBottles + filledChange;
-  const newEmpty  = current.totalEmptyBottles  + emptyChange;
-
-  if (newFilled < 0) throw new Error('Insufficient filled bottles in stock');
-  if (newEmpty  < 0) throw new Error('Empty bottle count cannot go negative');
-
-  const [updated] = await prisma.$transaction([
-    prisma.bottleInventory.update({
+  async function run(db) {
+    const updated = await db.bottleInventory.update({
       where: { id: INVENTORY_ID },
       data: {
-        totalFilledBottles: newFilled,
-        totalEmptyBottles:  newEmpty,
+        totalFilledBottles: { increment: filledChange },
+        totalEmptyBottles:  { increment: emptyChange },
         lastUpdatedAt:      new Date(),
         updatedBy:          createdBy,
       },
-    }),
-    prisma.inventoryLog.create({
+    });
+
+    if (updated.totalFilledBottles < 0) throw new Error('Insufficient filled bottles in stock');
+    if (updated.totalEmptyBottles  < 0) throw new Error('Empty bottle count cannot go negative');
+
+    await db.inventoryLog.create({
       data: {
         type,
         filledChange,
         emptyChange,
-        filledBalanceAfter: newFilled,
-        emptyBalanceAfter:  newEmpty,
+        filledBalanceAfter: updated.totalFilledBottles,
+        emptyBalanceAfter:  updated.totalEmptyBottles,
         referenceId,
         note,
         createdBy,
       },
-    }),
-  ]);
+    });
 
-  return updated;
+    return updated;
+  }
+
+  if (tx) return run(tx);
+  return prisma.$transaction((txx) => run(txx));
 }
 
 module.exports = { getInventory, adjustInventory };

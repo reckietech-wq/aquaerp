@@ -257,9 +257,12 @@ async function recordPayment(req, res) {
 
   // outstandingBalance already includes every unpaid invoice's totalAmount
   // (added at invoice-creation time), so a payment only ever subtracts the
-  // amount actually paid — it must never re-add any invoice total.
+  // amount ACTUALLY applied to an invoice — it must never re-add any invoice
+  // total, and must never subtract more than the FIFO loop below actually
+  // consumes (that was the phantom-credit bug: a resubmitted/late payment
+  // with no unpaid invoice left to absorb it used to decrement the balance
+  // by the full requested amount anyway).
   const balanceBefore = parseFloat(invoice.client.outstandingBalance);
-  const newBalance = balanceBefore - amount;
 
   // A single payment can cover more than the anchor invoice (e.g. a client
   // clearing several same-day deliveries' invoices at once). Apply the
@@ -276,6 +279,7 @@ async function recordPayment(req, res) {
   ].filter((i) => !i.isPaid || i.id === invoice.id);
 
   let remaining = amount;
+  let actualApplied = 0;
   const invoiceUpdates = [];
   for (const inv of ordered) {
     if (remaining <= 0) break;
@@ -300,7 +304,18 @@ async function recordPayment(req, res) {
       }),
     );
     remaining -= applied;
+    actualApplied += applied;
   }
+
+  if (actualApplied === 0) {
+    // Every invoice for this client (including the anchor) is already fully
+    // paid — there's nothing to apply this payment to. Do NOT touch the
+    // balance and do NOT create a PaymentHistory row for a payment that
+    // settled nothing.
+    return res.json({ message: 'No outstanding invoices to apply payment to' });
+  }
+
+  const newBalance = balanceBefore - actualApplied;
 
   const [updatedClient, payment, ...updatedInvoices] = await prisma.$transaction([
     prisma.client.update({
@@ -311,7 +326,7 @@ async function recordPayment(req, res) {
       data: {
         clientId: invoice.clientId,
         invoiceId: invoice.id,
-        amountPaid: amount,
+        amountPaid: actualApplied,
         paymentMethod,
         balanceBefore,
         balanceAfter: newBalance,
@@ -466,7 +481,13 @@ async function deleteInvoice(req, res) {
 
   const remainingUnpaid = parseFloat(invoice.totalAmount) - parseFloat(invoice.amountPaid);
 
-  const operations = [prisma.invoice.delete({ where: { id: invoiceId } })];
+  const operations = [
+    // PaymentHistory.invoiceId has no DB-level FK, so it wouldn't error on
+    // its own if left dangling — clean it up explicitly to keep the payment
+    // ledger from referencing a deleted invoice.
+    prisma.paymentHistory.deleteMany({ where: { invoiceId } }),
+    prisma.invoice.delete({ where: { id: invoiceId } }),
+  ];
   if (remainingUnpaid !== 0) {
     operations.push(
       prisma.client.update({

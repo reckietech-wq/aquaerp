@@ -24,8 +24,11 @@ async function getStats(req, res) {
     deliveryDate: { gte: rangeStart, lte: rangeEnd },
     ...(clientId && { clientId }),
   };
+  // "Revenue" here means cash actually collected in the period — SUM(amountPaid)
+  // across every invoice created in range, not SUM(totalAmount) restricted to
+  // isPaid:true (which would ignore partially-paid invoices' collected amount
+  // entirely).
   const invoiceWhere = {
-    isPaid: true,
     createdAt: { gte: rangeStart, lte: rangeEnd },
     ...(clientId && { clientId }),
   };
@@ -48,7 +51,7 @@ async function getStats(req, res) {
     prisma.invoice.count({ where: pendingInvoiceWhere }),
     prisma.invoice.aggregate({
       where: invoiceWhere,
-      _sum: { totalAmount: true },
+      _sum: { amountPaid: true },
     }),
     prisma.delivery.aggregate({
       where: deliveryWhere,
@@ -62,7 +65,7 @@ async function getStats(req, res) {
     todayDeliveries: periodDeliveries,
     todayBottlesDelivered: bottlesResult._sum.filledBottlesDelivered ?? 0,
     pendingInvoices,
-    totalRevenue: totalRevenue._sum.totalAmount ?? 0,
+    totalRevenue: totalRevenue._sum.amountPaid ?? 0,
   });
 }
 

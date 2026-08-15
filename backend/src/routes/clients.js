@@ -2,6 +2,7 @@ const { Router } = require('express');
 const {
   createClient, listClients, getClient, updateClient, deleteClient, getClientPayments, deletePayment,
   addHistoricalRecord, getClientHistoricalRecords, deleteHistoricalRecord, getClientSummary,
+  recalculateBalance,
 } = require('../controllers/clientController');
 const { getClientStatement } = require('../controllers/invoiceController');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
@@ -24,6 +25,7 @@ router.get('/:clientId/summary', getClientSummary);
 router.post('/:clientId/historical-record', addHistoricalRecord);
 router.get('/:clientId/historical-record', getClientHistoricalRecords);
 router.delete('/:clientId/historical-record/:invoiceId', deleteHistoricalRecord);
+router.post('/:clientId/recalculate-balance', recalculateBalance);
 router.put('/:id', updateClient);
 router.delete('/:id', deleteClient);
 

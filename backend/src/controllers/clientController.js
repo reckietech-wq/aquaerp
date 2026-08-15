@@ -1,10 +1,19 @@
 const prisma = require('../lib/prisma');
 
+const MAX_PLAUSIBLE_BOTTLES = 1000;
+
+function isValidRate(rate) {
+  return !isNaN(parseFloat(rate)) && parseFloat(rate) > 0;
+}
+
 async function createClient(req, res) {
   const { name, mobile, email, address, assignedDriverId, tempoNumber, route, ratePerBottle } = req.body;
 
   if (!name || !mobile || !address || !assignedDriverId || !tempoNumber || !route) {
     return res.status(400).json({ error: 'name, mobile, address, assignedDriverId, tempoNumber, and route are required' });
+  }
+  if (ratePerBottle !== undefined && !isValidRate(ratePerBottle)) {
+    return res.status(400).json({ error: 'ratePerBottle must be a positive number' });
   }
 
   const driver = await prisma.driver.findUnique({ where: { id: assignedDriverId } });
@@ -82,6 +91,10 @@ async function getClient(req, res) {
 
 async function updateClient(req, res) {
   const { name, mobile, email, address, assignedDriverId, tempoNumber, route, ratePerBottle } = req.body;
+
+  if (ratePerBottle !== undefined && !isValidRate(ratePerBottle)) {
+    return res.status(400).json({ error: 'ratePerBottle must be a positive number' });
+  }
 
   const client = await prisma.client.findUnique({ where: { id: req.params.id } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
@@ -168,11 +181,13 @@ async function getClientPayments(req, res) {
 }
 
 // ─── DELETE /api/clients/:id/payments/:paymentId  (ADMIN only) ───────────────
-// Reverses a recorded payment's effect on the client's outstandingBalance and
-// removes the ledger entry. Note: this does not retroactively un-apply the
-// payment from whichever invoice(s) it settled (a single payment can cover
-// several invoices via FIFO) — admins should use the invoice status toggle
-// to correct any resulting invoice-level mismatch.
+// Reverses a recorded payment's effect on the client's outstandingBalance AND
+// on whichever invoice(s) it settled — a payment's exact per-invoice FIFO
+// breakdown isn't stored, so this un-applies the deleted amount from the
+// client's invoices newest-settled-first (paidAt desc, then createdAt desc
+// among partials), which is the best-effort mirror of FIFO's oldest-first
+// apply order. The balance is always adjusted back up by the full deleted
+// amount regardless of how much could be matched to specific invoices.
 async function deletePayment(req, res) {
   const { id: clientId, paymentId } = req.params;
 
@@ -184,15 +199,73 @@ async function deletePayment(req, res) {
   const client = await prisma.client.findUnique({ where: { id: clientId } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
 
+  const amountToReverse = Number(payment.amountPaid);
+
+  const candidates = await prisma.invoice.findMany({
+    where: { clientId, amountPaid: { gt: 0 } },
+    orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
+  });
+
+  let remaining = amountToReverse;
+  const invoiceUpdates = [];
+  for (const inv of candidates) {
+    if (remaining <= 0) break;
+    const currentPaid = Number(inv.amountPaid);
+    if (currentPaid <= 0) continue;
+
+    const reduceBy = Math.min(remaining, currentPaid);
+    const newAmountPaid = parseFloat((currentPaid - reduceBy).toFixed(2));
+    const newIsPaid = newAmountPaid >= Number(inv.totalAmount);
+
+    invoiceUpdates.push(
+      prisma.invoice.update({
+        where: { id: inv.id },
+        data: {
+          amountPaid: newAmountPaid,
+          isPaid: newIsPaid,
+          ...(!newIsPaid && { paidAt: null }),
+        },
+      }),
+    );
+    remaining -= reduceBy;
+  }
+
   await prisma.$transaction([
     prisma.client.update({
       where: { id: clientId },
-      data: { outstandingBalance: { increment: payment.amountPaid } },
+      data: { outstandingBalance: { increment: amountToReverse } },
     }),
     prisma.paymentHistory.delete({ where: { id: paymentId } }),
+    ...invoiceUpdates,
   ]);
 
-  res.json({ message: 'Payment entry deleted and balance reversed' });
+  res.json({ message: 'Payment entry deleted, balance and invoices reversed' });
+}
+
+// ─── POST /api/clients/:clientId/recalculate-balance  (ADMIN only) ───────────
+// Safety-net repair endpoint: recomputes outstandingBalance from scratch as
+// SUM(totalAmount - amountPaid) across every invoice for this client,
+// independent of whatever incremental history led to the current stored
+// value. Use after any manual DB correction or a delete sequence that may
+// have left the balance out of sync with the invoices themselves.
+async function recalculateBalance(req, res) {
+  const { clientId } = req.params;
+  const client = await prisma.client.findUnique({ where: { id: clientId } });
+  if (!client) return res.status(404).json({ error: 'Client not found' });
+
+  const agg = await prisma.invoice.aggregate({
+    where: { clientId },
+    _sum: { totalAmount: true, amountPaid: true },
+  });
+
+  const oldBalance = Number(client.outstandingBalance);
+  const newBalance = parseFloat(
+    (Number(agg._sum.totalAmount ?? 0) - Number(agg._sum.amountPaid ?? 0)).toFixed(2)
+  );
+
+  await prisma.client.update({ where: { id: clientId }, data: { outstandingBalance: newBalance } });
+
+  res.json({ oldBalance, newBalance });
 }
 
 // ─── POST /api/clients/:clientId/historical-record  (ADMIN only) ─────────────
@@ -210,6 +283,9 @@ async function addHistoricalRecord(req, res) {
   if (!date || isNaN(bottles) || bottles <= 0) {
     return res.status(400).json({ error: 'date and a positive bottlesDelivered are required' });
   }
+  if (bottles > MAX_PLAUSIBLE_BOTTLES) {
+    return res.status(400).json({ error: 'Bottle count seems too high, please verify' });
+  }
   const rate = ratePerBottle != null ? parseFloat(ratePerBottle) : Number(client.ratePerBottle);
   if (isNaN(rate) || rate <= 0) {
     return res.status(400).json({ error: 'A valid ratePerBottle is required' });
@@ -220,7 +296,14 @@ async function addHistoricalRecord(req, res) {
   }
 
   const deliveryDate = new Date(date);
+  if (deliveryDate.getTime() > Date.now()) {
+    return res.status(400).json({ error: 'Date cannot be in the future' });
+  }
+
   const totalAmount = parseFloat((bottles * rate).toFixed(2));
+  if (paid > totalAmount) {
+    return res.status(400).json({ error: 'Amount paid cannot exceed total' });
+  }
   const remaining = parseFloat((totalAmount - paid).toFixed(2));
 
   const balanceBefore = Number(client.outstandingBalance);
@@ -379,4 +462,5 @@ module.exports = {
   getClientHistoricalRecords,
   deleteHistoricalRecord,
   getClientSummary,
+  recalculateBalance,
 };

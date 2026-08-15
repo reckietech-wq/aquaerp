@@ -18,6 +18,13 @@ async function login(req, res) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
+  if (user.role === 'DRIVER') {
+    const driver = await prisma.driver.findUnique({ where: { userId: user.id } });
+    if (!driver || !driver.isActive) {
+      return res.status(401).json({ error: 'Account deactivated' });
+    }
+  }
+
   const token = jwt.sign(
     { id: user.id, name: user.name, role: user.role, loginId: user.loginId },
     process.env.JWT_SECRET,

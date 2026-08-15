@@ -1,6 +1,8 @@
 const prisma = require('../lib/prisma');
 const { adjustInventory } = require('../services/inventoryService');
 
+const MAX_PLAUSIBLE_BOTTLES = 1000;
+
 async function createDelivery(req, res) {
   const { clientId, filledBottlesDelivered, emptyBottlesCollected, deliveryDate, notes, status } = req.body;
 
@@ -10,6 +12,13 @@ async function createDelivery(req, res) {
 
   const filled = parseInt(filledBottlesDelivered, 10);
   const empty  = parseInt(emptyBottlesCollected,  10);
+
+  if (isNaN(filled) || filled < 0 || isNaN(empty) || empty < 0) {
+    return res.status(400).json({ error: 'filledBottlesDelivered and emptyBottlesCollected must be non-negative numbers' });
+  }
+  if (filled > MAX_PLAUSIBLE_BOTTLES || empty > MAX_PLAUSIBLE_BOTTLES) {
+    return res.status(400).json({ error: 'Bottle count seems too high, please verify' });
+  }
 
   const client = await prisma.client.findUnique({ where: { id: clientId } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
@@ -41,40 +50,45 @@ async function createDelivery(req, res) {
     } catch { /* if no inventory row yet, skip pre-check */ }
   }
 
-  const delivery = await prisma.delivery.create({
-    data: {
-      clientId,
-      driverId,
-      userId:                req.user.id,
-      deliveryDate:          deliveryDate ? new Date(deliveryDate) : new Date(),
-      filledBottlesDelivered: filled,
-      emptyBottlesCollected:  empty,
-      status:                status ?? 'COMPLETED',
-      notes:                 notes ?? null,
-    },
-  });
-
-  // Update inventory — filled go out, empties come in
-  let inventory = null;
+  // Delivery creation and the inventory adjustment it triggers are wrapped in
+  // one transaction: if stock would go negative, adjustInventory throws,
+  // which rolls back the delivery too — a failed stock check can no longer
+  // leave a delivery row with no matching inventory movement.
+  let result;
   try {
-    inventory = await adjustInventory({
-      filledChange: -filled,
-      emptyChange:  +empty,
-      type:         'DELIVERY_OUT',
-      referenceId:  delivery.id,
-      note:         `Delivery to ${client.name}`,
-      createdBy:    req.user.loginId ?? req.user.id,
+    result = await prisma.$transaction(async (tx) => {
+      const d = await tx.delivery.create({
+        data: {
+          clientId,
+          driverId,
+          userId:                req.user.id,
+          deliveryDate:          deliveryDate ? new Date(deliveryDate) : new Date(),
+          filledBottlesDelivered: filled,
+          emptyBottlesCollected:  empty,
+          status:                status ?? 'COMPLETED',
+          notes:                 notes ?? null,
+        },
+      });
+
+      const inv = await adjustInventory({
+        filledChange: -filled,
+        emptyChange:  +empty,
+        type:         'DELIVERY_OUT',
+        referenceId:  d.id,
+        note:         `Delivery to ${client.name}`,
+        createdBy:    req.user.loginId ?? req.user.id,
+        tx,
+      });
+
+      return { delivery: d, inventory: inv };
     });
   } catch (err) {
-    // Inventory update failed — delivery is already created, log and continue
-    console.error('[inventory] adjustment failed after delivery create:', err.message);
+    return res.status(400).json({ error: err.message || 'Failed to record delivery' });
   }
 
   res.status(201).json({
-    delivery,
-    inventory: inventory
-      ? { totalFilled: inventory.totalFilledBottles, totalEmpty: inventory.totalEmptyBottles }
-      : null,
+    delivery: result.delivery,
+    inventory: { totalFilled: result.inventory.totalFilledBottles, totalEmpty: result.inventory.totalEmptyBottles },
   });
 }
 
@@ -144,6 +158,9 @@ async function updateDelivery(req, res) {
   const newEmpty  = emptyBottlesCollected  != null ? parseInt(emptyBottlesCollected, 10)  : delivery.emptyBottlesCollected;
   if (isNaN(newFilled) || newFilled < 0 || isNaN(newEmpty) || newEmpty < 0) {
     return res.status(400).json({ error: 'filledBottlesDelivered and emptyBottlesCollected must be non-negative numbers' });
+  }
+  if (newFilled > MAX_PLAUSIBLE_BOTTLES || newEmpty > MAX_PLAUSIBLE_BOTTLES) {
+    return res.status(400).json({ error: 'Bottle count seems too high, please verify' });
   }
 
   const filledDelta = newFilled - delivery.filledBottlesDelivered;
@@ -224,6 +241,10 @@ async function deleteDelivery(req, res) {
   if (delivery.invoice) {
     const remainingUnpaid = Number(delivery.invoice.totalAmount) - Number(delivery.invoice.amountPaid);
     operations.push(
+      // PaymentHistory.invoiceId has no DB-level FK, so it wouldn't error on
+      // its own if left dangling — clean it up explicitly to keep the
+      // payment ledger from referencing a deleted invoice.
+      prisma.paymentHistory.deleteMany({ where: { invoiceId: delivery.invoice.id } }),
       prisma.invoice.delete({ where: { id: delivery.invoice.id } }),
     );
     if (remainingUnpaid !== 0) {
