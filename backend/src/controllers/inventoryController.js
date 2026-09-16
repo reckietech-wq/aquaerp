@@ -128,4 +128,37 @@ async function deleteLog(req, res) {
   res.json({ message: 'Log entry reversed and deleted' });
 }
 
-module.exports = { getInventoryHandler, getLogs, adminRestock, adminDispatchEmpties, manualAdjustment, deleteLog };
+// ─── GET /api/inventory/bottles-out  (admin only) ─────────────────────────────
+// "Who we need to collect from" — every client currently holding filled
+// bottles we haven't gotten empties back for, sourced straight from
+// Client.bottlesOut (kept in sync on every delivery), sorted by how many
+// they're holding, plus the total across all clients.
+async function getBottlesOut(req, res) {
+  const clients = await prisma.client.findMany({
+    where: { bottlesOut: { gt: 0 }, isActive: true },
+    select: {
+      id: true,
+      name: true,
+      address: true,
+      route: true,
+      bottlesOut: true,
+      assignedDriver: { select: { user: { select: { name: true } } } },
+    },
+    orderBy: { bottlesOut: 'desc' },
+  });
+
+  const rows = clients.map((c) => ({
+    clientId:   c.id,
+    clientName: c.name,
+    address:    c.address,
+    route:      c.route,
+    driverName: c.assignedDriver?.user?.name ?? '—',
+    bottlesOut: c.bottlesOut,
+  }));
+
+  const total = rows.reduce((s, r) => s + r.bottlesOut, 0);
+
+  res.json({ clients: rows, total });
+}
+
+module.exports = { getInventoryHandler, getLogs, adminRestock, adminDispatchEmpties, manualAdjustment, deleteLog, getBottlesOut };

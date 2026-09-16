@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `Client` ADD COLUMN `bottlesOut` INTEGER NOT NULL DEFAULT 0;

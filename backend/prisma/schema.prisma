@@ -75,6 +75,7 @@ model Client {
   tempoNumber         String
   ratePerBottle       Decimal  @default(50) @db.Decimal(10, 2)
   outstandingBalance  Decimal  @default(0) @db.Decimal(10, 2)
+  bottlesOut          Int      @default(0)
   isActive            Boolean  @default(true)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt

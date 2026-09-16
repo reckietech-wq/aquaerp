@@ -6,6 +6,7 @@ const {
   adminDispatchEmpties,
   manualAdjustment,
   deleteLog,
+  getBottlesOut,
 } = require('../controllers/inventoryController');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 
@@ -15,6 +16,7 @@ router.use(verifyToken);
 // Static paths before any dynamic ones
 router.get('/',                   getInventoryHandler);      // both roles
 router.get('/logs',               requireAdmin, getLogs);
+router.get('/bottles-out',        requireAdmin, getBottlesOut);
 router.post('/restock',           requireAdmin, adminRestock);
 router.post('/dispatch-empties',  requireAdmin, adminDispatchEmpties);
 router.post('/adjust',            requireAdmin, manualAdjustment);

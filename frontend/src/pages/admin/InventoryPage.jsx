@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Package, Plus, Truck, Wrench, TrendingUp, TrendingDown,
   RefreshCw, X, Loader2, ChevronLeft, ChevronRight,
-  AlertTriangle, AlertCircle, Info, Trash2,
+  AlertTriangle, AlertCircle, Info, Trash2, Users, MapPin,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../lib/api';
@@ -346,6 +346,10 @@ export default function InventoryPage() {
   const [modal, setModal] = useState(null); // 'restock' | 'dispatch' | 'adjust'
   const [deletingLogId, setDeletingLogId] = useState(null);
 
+  const [bottlesOut, setBottlesOut]         = useState([]);
+  const [bottlesOutTotal, setBottlesOutTotal] = useState(0);
+  const [bottlesOutLoading, setBottlesOutLoading] = useState(true);
+
   const timerRef = useRef(null);
 
   // ── Fetch inventory ──────────────────────────────────────────────────────────
@@ -380,14 +384,30 @@ export default function InventoryPage() {
     }
   }, [typeFilter, fromDate, toDate]);
 
+  // ── Fetch bottles-out-by-client ────────────────────────────────────────────────
+
+  const fetchBottlesOut = useCallback(async () => {
+    setBottlesOutLoading(true);
+    try {
+      const { data } = await api.get('/api/inventory/bottles-out');
+      setBottlesOut(data.clients);
+      setBottlesOutTotal(data.total);
+    } catch {
+      toast.error('Failed to load bottles-out report');
+    } finally {
+      setBottlesOutLoading(false);
+    }
+  }, []);
+
   // ── Effects ──────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     fetchInventory();
+    fetchBottlesOut();
     // Auto-refresh every 30 seconds
-    timerRef.current = setInterval(fetchInventory, 30_000);
+    timerRef.current = setInterval(() => { fetchInventory(); fetchBottlesOut(); }, 30_000);
     return () => clearInterval(timerRef.current);
-  }, [fetchInventory]);
+  }, [fetchInventory, fetchBottlesOut]);
 
   useEffect(() => {
     setLogsPage(1);
@@ -530,6 +550,99 @@ export default function InventoryPage() {
           className="flex items-center gap-2 px-5 py-2.5 bg-slate-600 hover:bg-slate-700 text-white text-sm font-semibold rounded-xl shadow-sm transition-colors">
           <Wrench size={16} /> Manual Adjustment
         </button>
+      </div>
+
+      {/* ── Bottles Out by Client ─────────────────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <div>
+            <h2 className="font-bold text-slate-800 flex items-center gap-2">
+              <Users size={16} className="text-slate-400" /> Bottles Out by Client
+            </h2>
+            <p className="text-xs text-slate-400 mt-0.5">Who's holding our filled bottles — who to collect from</p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-slate-400 uppercase tracking-wide font-semibold">Total Out</p>
+            <p className="text-2xl font-black text-blue-900 tabular-nums">
+              {bottlesOutLoading ? '—' : bottlesOutTotal}
+            </p>
+          </div>
+        </div>
+
+        {/* Desktop table */}
+        <div className="hidden md:block overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 bg-slate-50/60">
+                {['Client', 'Route', 'Driver', 'Bottles Out'].map((h) => (
+                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {bottlesOutLoading ? (
+                Array.from({ length: 4 }).map((_, i) => (
+                  <tr key={i} className="animate-pulse">
+                    {Array.from({ length: 4 }).map((_, j) => (
+                      <td key={j} className="px-4 py-3"><div className="h-4 bg-slate-200 rounded" style={{ width: `${50 + (j * 13) % 40}%` }} /></td>
+                    ))}
+                  </tr>
+                ))
+              ) : bottlesOut.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="text-center py-16 text-slate-400">
+                    <Users size={32} className="mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">No clients currently holding bottles</p>
+                  </td>
+                </tr>
+              ) : bottlesOut.map((row) => (
+                <tr key={row.clientId} className="hover:bg-slate-50/60 transition-colors">
+                  <td className="px-4 py-3 font-medium text-slate-800">{row.clientName}</td>
+                  <td className="px-4 py-3 text-slate-500">
+                    <span className="inline-flex items-center gap-1"><MapPin size={10} /> {row.route}</span>
+                  </td>
+                  <td className="px-4 py-3 text-slate-500">{row.driverName}</td>
+                  <td className="px-4 py-3">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-bold text-sm">
+                      <Package size={12} /> {row.bottlesOut}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Mobile cards */}
+        <div className="md:hidden divide-y divide-slate-50">
+          {bottlesOutLoading ? (
+            Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="p-4 space-y-2 animate-pulse">
+                <div className="h-4 bg-slate-200 rounded w-32" />
+                <div className="h-3 bg-slate-100 rounded w-48" />
+              </div>
+            ))
+          ) : bottlesOut.length === 0 ? (
+            <div className="flex flex-col items-center py-16 text-slate-400 gap-2">
+              <Users size={32} className="opacity-30" />
+              <p className="text-sm">No clients currently holding bottles</p>
+            </div>
+          ) : bottlesOut.map((row) => (
+            <div key={row.clientId} className="p-4 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-medium text-slate-800 truncate">{row.clientName}</p>
+                <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
+                  <MapPin size={9} /> {row.route} · {row.driverName}
+                </p>
+              </div>
+              <span className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-bold text-sm">
+                <Package size={12} /> {row.bottlesOut}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* ── Inventory log table ─────────────────────────────────────────── */}

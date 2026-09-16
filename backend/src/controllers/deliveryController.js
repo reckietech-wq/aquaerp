@@ -4,7 +4,7 @@ const { adjustInventory } = require('../services/inventoryService');
 const MAX_PLAUSIBLE_BOTTLES = 1000;
 
 async function createDelivery(req, res) {
-  const { clientId, filledBottlesDelivered, emptyBottlesCollected, deliveryDate, notes, status } = req.body;
+  const { clientId, filledBottlesDelivered, emptyBottlesCollected, deliveryDate, notes, status, bottlesOutOverride } = req.body;
 
   if (!clientId || filledBottlesDelivered == null || emptyBottlesCollected == null) {
     return res.status(400).json({ error: 'clientId, filledBottlesDelivered, and emptyBottlesCollected are required' });
@@ -18,6 +18,17 @@ async function createDelivery(req, res) {
   }
   if (filled > MAX_PLAUSIBLE_BOTTLES || empty > MAX_PLAUSIBLE_BOTTLES) {
     return res.status(400).json({ error: 'Bottle count seems too high, please verify' });
+  }
+
+  let override = null;
+  if (bottlesOutOverride != null) {
+    override = parseInt(bottlesOutOverride, 10);
+    if (isNaN(override) || override < 0) {
+      return res.status(400).json({ error: 'bottlesOutOverride must be a non-negative number' });
+    }
+    if (override > MAX_PLAUSIBLE_BOTTLES) {
+      return res.status(400).json({ error: 'Bottle count seems too high, please verify' });
+    }
   }
 
   const client = await prisma.client.findUnique({ where: { id: clientId } });
@@ -80,7 +91,21 @@ async function createDelivery(req, res) {
         tx,
       });
 
-      return { delivery: d, inventory: inv };
+      // Track how many of our filled bottles this client is currently
+      // holding (delivered but not yet returned as empties). A driver can
+      // override this with an on-site manual count instead of trusting the
+      // running calculation, e.g. after a correction.
+      const newBottlesOut = override != null
+        ? override
+        : Math.max(0, client.bottlesOut + filled - empty);
+
+      const updatedClient = await tx.client.update({
+        where: { id: clientId },
+        data: { bottlesOut: newBottlesOut },
+        select: { bottlesOut: true },
+      });
+
+      return { delivery: d, inventory: inv, bottlesOut: updatedClient.bottlesOut };
     });
   } catch (err) {
     return res.status(400).json({ error: err.message || 'Failed to record delivery' });
@@ -89,6 +114,7 @@ async function createDelivery(req, res) {
   res.status(201).json({
     delivery: result.delivery,
     inventory: { totalFilled: result.inventory.totalFilledBottles, totalEmpty: result.inventory.totalEmptyBottles },
+    bottlesOut: result.bottlesOut,
   });
 }
 
