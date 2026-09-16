@@ -18,25 +18,36 @@ function normalizeMobile(raw) {
   return `91${digits}`;                                  // always 12 digits
 }
 
-function buildWhatsAppMessage(bill) {
-  const upiId       = process.env.BUSINESS_UPI_ID || process.env.UPI_ID || 'yourbusiness@upi';
-  const bizName     = process.env.BUSINESS_NAME   || 'Gajanan Aqua';
-  const monthName   = MONTH_NAMES[bill.month];
-  const clientName  = bill.client?.name ?? 'Customer';
-  const rate        = fmtAmount(bill.ratePerBottle);
-  const total       = fmtAmount(bill.totalAmount);
+// `billing` is a live billing summary from billingService.getClientMonthBilling
+// — status/amounts here are always exactly what Invoices/Statement show,
+// since they're computed from the same Invoice records, not a separately
+// tracked MonthlyBill.status.
+function buildWhatsAppMessage(billing) {
+  const upiId      = process.env.BUSINESS_UPI_ID || process.env.UPI_ID || 'yourbusiness@upi';
+  const bizName    = process.env.BUSINESS_NAME   || 'Gajanan Aqua';
+  const monthName  = MONTH_NAMES[billing.month];
+  const clientName = billing.clientName ?? 'Customer';
+  const rate       = fmtAmount(billing.ratePerBottle);
+  const totalBilled = fmtAmount(billing.totalBilled);
+  const remaining    = fmtAmount(billing.totalBilled - billing.totalPaid);
+
+  const statusLine =
+    billing.status === 'PAID'    ? '✅ Fully Paid — thank you!' :
+    billing.status === 'PARTIAL' ? `⏳ Partially Paid — ₹${remaining} remaining` :
+                                    '⏳ Payment Pending';
 
   const message = [
     `\u{1F4A7} *${bizName} - Monthly Invoice*`,
     ``,
     `Dear ${clientName},`,
     ``,
-    `Your water can delivery bill for *${monthName} ${bill.year}* is ready.`,
+    `Your water can delivery bill for *${monthName} ${billing.year}* is ready.`,
     ``,
-    `\u{1F4E6} Total Bottles Delivered: *${bill.totalBottlesDelivered}*`,
+    `\u{1F4E6} Total Bottles Delivered: *${billing.totalBottles}*`,
     `\u{1F4B0} Rate per Bottle: ₹${rate}`,
     `━━━━━━━━━━━━━━━━`,
-    `\u{1F4B5} *Total Amount: ₹${total}*`,
+    `\u{1F4B5} *Total Amount: ₹${totalBilled}*`,
+    `Status: ${statusLine}`,
     ``,
     `Please make the payment at your earliest convenience.`,
     ``,
