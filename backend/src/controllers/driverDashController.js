@@ -19,8 +19,12 @@ async function getMyClients(req, res) {
   const clients = await prisma.client.findMany({
     where: { assignedDriverId: driver.id, isActive: true },
     include: {
+      // Only COMPLETED deliveries count as "delivered" — matches
+      // getSummary's filter and dashboardController's deliveryWhere, so
+      // todayDeliveryCount/todayFilledBottles never disagree with them over
+      // a PENDING delivery that hasn't actually moved bottles yet.
       deliveries: {
-        where: { deliveryDate: { gte: start, lte: end } },
+        where: { deliveryDate: { gte: start, lte: end }, status: 'COMPLETED' },
         orderBy: { createdAt: 'desc' },
       },
       // Most recent past delivery for "last delivery date"

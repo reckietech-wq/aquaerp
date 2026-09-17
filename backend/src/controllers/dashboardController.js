@@ -20,8 +20,13 @@ async function getStats(req, res) {
   const rangeEnd = new Date();
   rangeEnd.setHours(23, 59, 59, 999);
 
+  // Only COMPLETED deliveries count as "delivered" — a PENDING delivery
+  // hasn't actually moved any bottles yet, and this must stay consistent
+  // with driverDashController's getSummary/getMyClients so the dashboard
+  // and driver app never disagree on the same day's delivery count.
   const deliveryWhere = {
     deliveryDate: { gte: rangeStart, lte: rangeEnd },
+    status: 'COMPLETED',
     ...(clientId && { clientId }),
   };
   // "Revenue" here means cash actually collected in the period — SUM(amountPaid)
