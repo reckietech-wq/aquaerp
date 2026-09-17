@@ -8,7 +8,6 @@ import {
   Receipt,
   BarChart3,
   LogOut,
-  Droplets,
   ChevronLeft,
   ChevronRight,
   Package,
@@ -85,13 +84,11 @@ export default function AdminLayout() {
       >
         {/* Brand */}
         <div
-          className={`flex items-center gap-3 px-4 py-5 border-b border-white/10 ${
+          className={`flex items-center gap-3 px-4 py-4 border-b border-white/10 ${
             collapsed ? 'justify-center' : ''
           }`}
         >
-          <div className="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center shrink-0">
-            <Droplets size={18} className="text-white" />
-          </div>
+          <img src="/logo.png" alt="Gajanan Aqua" className="h-10 w-10 rounded-lg object-cover shrink-0" />
           {!collapsed && (
             <span className="text-white font-bold text-lg tracking-tight">Gajanan Aqua</span>
           )}
@@ -147,7 +144,7 @@ export default function AdminLayout() {
         {/* Top header */}
         <header className="flex items-center justify-between px-4 md:px-6 py-3 bg-white border-b border-slate-200 shrink-0">
           <div className="flex items-center gap-2 md:hidden">
-            <Droplets size={20} className="text-blue-900" />
+            <img src="/logo.png" alt="Gajanan Aqua" className="h-8 w-8 rounded-lg object-cover" />
             <span className="text-blue-900 font-bold text-base">Gajanan Aqua</span>
           </div>
           <div className="hidden md:block" />

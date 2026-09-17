@@ -3,7 +3,7 @@ import {
   Receipt, Download, MessageCircle, CheckCircle2, Search, X,
   Loader2, Phone, Package, ChevronDown, Check, Square,
   CheckSquare, FileText, MapPin, Send, Calendar, Users,
-  RefreshCw, Printer, Droplets, Clock, IndianRupee, Eye,
+  RefreshCw, Printer, Clock, IndianRupee, Eye,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../lib/api';
@@ -31,7 +31,10 @@ function fmtRupee(n) {
 
 function fmtDate(d) {
   if (!d) return '—';
-  return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const dt = new Date(d);
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${dt.getFullYear()}`;
 }
 
 function buildWaUrl(mobile, message) {
@@ -152,7 +155,9 @@ function ClientBillingModal({ bill, onClose, onChanged }) {
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,-apple-system,sans-serif;font-size:13px;color:#1e293b;padding:28px}
-.header{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:14px;border-bottom:2px solid #e2e8f0;margin-bottom:16px}
+.header{display:flex;justify-content:space-between;align-items:center;padding-bottom:14px;border-bottom:2px solid #e2e8f0;margin-bottom:16px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand img{width:36px;height:36px;border-radius:8px;object-fit:cover}
 .logo{font-size:20px;font-weight:800;color:#1e3a8a}.sub{color:#64748b;font-size:12px;margin-top:3px}
 .inv-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#94a3b8}
 .inv-num{font-weight:700;font-size:15px;margin-top:3px}.inv-date{color:#64748b;font-size:12px;margin-top:3px}
@@ -168,7 +173,10 @@ td{padding:8px 12px;border:1px solid #e2e8f0}
 .footer{text-align:center;color:#94a3b8;font-size:11px;margin-top:20px;padding-top:12px;border-top:1px solid #e2e8f0}
 </style></head><body>
 <div class="header">
-  <div><div class="logo">💧 Gajanan Aqua</div><div class="sub">Water Can Supply Co.</div></div>
+  <div class="brand">
+    <img src="${window.location.origin}/logo.png" alt="Gajanan Aqua" />
+    <div><div class="logo">Gajanan Aqua</div><div class="sub">Water Can Supply Co.</div></div>
+  </div>
   <div style="text-align:right">
     <div class="inv-label">Invoice</div>
     <div class="inv-num">${invoiceNumber}</div>
@@ -232,17 +240,15 @@ td{padding:8px 12px;border:1px solid #e2e8f0}
           {/* LEFT: detail */}
           <div className="flex-1 overflow-y-auto p-5 space-y-4 text-sm">
 
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-9 h-9 bg-blue-900 rounded-xl flex items-center justify-center shrink-0">
-                  <Droplets size={18} className="text-white" />
-                </div>
-                <div>
-                  <p className="font-bold text-base text-blue-900 leading-tight">Gajanan Aqua</p>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <img src="/logo.png" alt="Gajanan Aqua" className="w-9 h-9 rounded-xl object-cover shrink-0" />
+                <div className="min-w-0">
+                  <p className="font-bold text-base text-blue-900 leading-tight truncate">Gajanan Aqua</p>
                   <p className="text-slate-400 text-xs">Water Can Supply Co.</p>
                 </div>
               </div>
-              <div className="text-right">
+              <div className="text-right shrink-0">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Invoice</p>
                 <p className="font-bold text-slate-800 font-mono text-sm mt-0.5">{invoiceNumber}</p>
                 <p className="text-slate-400 text-xs mt-0.5">{MONTH_NAMES[month]} {year}</p>
@@ -252,14 +258,14 @@ td{padding:8px 12px;border:1px solid #e2e8f0}
             <div className="border-t border-slate-200" />
 
             <div className="grid grid-cols-2 gap-3">
-              <div className="bg-slate-50 rounded-xl p-3">
+              <div className="bg-slate-50 rounded-xl p-3 min-w-0">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Bill To</p>
-                <p className="font-bold text-slate-800">{bill.clientName}</p>
-                <p className="text-slate-500 text-xs mt-1 leading-relaxed">{bill.address}</p>
+                <p className="font-bold text-slate-800 break-words">{bill.clientName}</p>
+                <p className="text-slate-500 text-xs mt-1 leading-relaxed break-words">{bill.address}</p>
                 <p className="text-slate-500 text-xs flex items-center gap-1 mt-1"><Phone size={9} /> {bill.mobile}</p>
                 <p className="text-slate-400 text-xs flex items-center gap-1 mt-0.5"><MapPin size={9} /> {bill.route}</p>
               </div>
-              <div className="bg-blue-50 rounded-xl p-3">
+              <div className="bg-blue-50 rounded-xl p-3 min-w-0">
                 <p className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">Delivered By</p>
                 <p className="font-bold text-slate-800">{bill.driverName}</p>
                 {bill.driverVehicle && <p className="text-slate-500 text-xs mt-1">{bill.driverVehicle}</p>}

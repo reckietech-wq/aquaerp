@@ -3,7 +3,7 @@ import api from '../lib/api';
 import toast from 'react-hot-toast';
 import { QRCodeSVG } from 'qrcode.react';
 import {
-  X, CheckCircle, Clock, Droplets, FileText, CheckCheck, Trash2, RotateCcw,
+  X, CheckCircle, Clock, FileText, CheckCheck, Trash2, RotateCcw,
 } from 'lucide-react';
 
 function fmt(n) {
@@ -11,7 +11,10 @@ function fmt(n) {
 }
 function fmtDate(d) {
   if (!d) return '—';
-  return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const dt = new Date(d);
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${dt.getFullYear()}`;
 }
 
 // Per-invoice detail + admin actions (mark paid/unpaid, delete). Opened from
@@ -118,17 +121,15 @@ export default function InvoiceDetailModal({ invoiceId, onClose, onChanged }) {
             <div className="border border-slate-200 rounded-xl overflow-hidden font-sans">
 
               {/* Invoice top bar */}
-              <div className="bg-blue-900 text-white px-6 py-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-white/15 rounded-xl flex items-center justify-center">
-                    <Droplets size={20} />
-                  </div>
-                  <div>
-                    <p className="font-bold text-lg leading-none">Gajanan Aqua</p>
+              <div className="bg-blue-900 text-white px-6 py-4 flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <img src="/logo.png" alt="Gajanan Aqua" className="w-10 h-10 rounded-xl object-cover shrink-0" />
+                  <div className="min-w-0">
+                    <p className="font-bold text-lg leading-none truncate">Gajanan Aqua</p>
                     <p className="text-blue-300 text-xs mt-0.5">Water Can Supply</p>
                   </div>
                 </div>
-                <div className="text-right">
+                <div className="text-right shrink-0">
                   <p className="text-xs text-blue-300 uppercase tracking-wider">Tax Invoice</p>
                   <p className="font-mono font-bold text-sm mt-0.5">{invoice.invoiceNumber}</p>
                   <p className="text-blue-300 text-xs mt-0.5">Date: {fmtDate(invoice.createdAt)}</p>
@@ -137,13 +138,13 @@ export default function InvoiceDetailModal({ invoiceId, onClose, onChanged }) {
 
               {/* Bill To / Delivered By */}
               <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200">
-                <div className="px-5 py-4">
+                <div className="px-5 py-4 min-w-0">
                   <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Bill To</p>
-                  <p className="font-semibold text-slate-800">{invoice.client?.name}</p>
-                  <p className="text-sm text-slate-600 mt-0.5">{invoice.client?.address}</p>
+                  <p className="font-semibold text-slate-800 break-words">{invoice.client?.name}</p>
+                  <p className="text-sm text-slate-600 mt-0.5 break-words">{invoice.client?.address}</p>
                   <p className="text-sm text-slate-600 mt-0.5">📞 {invoice.client?.mobile}</p>
                 </div>
-                <div className="px-5 py-4">
+                <div className="px-5 py-4 min-w-0">
                   <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Delivered By</p>
                   {driver ? (
                     <p className="font-semibold text-slate-800">{driver.name}</p>

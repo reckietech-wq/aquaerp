@@ -8,10 +8,12 @@ const { getClientMonthBilling } = require('./billingService');
 
 const UPLOADS_DIR = path.join(__dirname, '../../uploads/invoices');
 const FALLBACK_QR_PATH = path.join(__dirname, '../../assets/payment-qr.png');
+const LOGO_PATH = path.join(__dirname, '../../assets/logo.png');
 const BRAND_BLUE  = '#1e3a5f';
 const BRAND_LIGHT = '#e8f0fe';
 const GRAY        = '#64748b';
 const DARK        = '#1e293b';
+const BORDER      = '#cbd5e1';
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -25,10 +27,12 @@ function fmtRupee(n) {
   return `Rs. ${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+// dd/mm/yyyy — consistent with the web UI's invoice/statement views
 function fmtDate(d) {
-  return new Date(d).toLocaleDateString('en-IN', {
-    day: '2-digit', month: 'short', year: 'numeric',
-  });
+  const dt = new Date(d);
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${dt.getFullYear()}`;
 }
 
 function ensureDir() {
@@ -82,17 +86,31 @@ async function generateClientMonthPDF(clientId, month, year) {
     // ── HEADER ────────────────────────────────────────────────────────────────
     doc.rect(0, 0, W, 90).fill(BRAND_BLUE);
 
+    // Logo (falls back gracefully — text-only header — if the asset is missing)
+    let textX = 50;
+    if (fs.existsSync(LOGO_PATH)) {
+      try {
+        doc.image(LOGO_PATH, 50, 20, { width: 48, height: 48 });
+        textX = 108;
+      } catch (err) {
+        console.error('[pdfService] logo embed failed:', err.message);
+      }
+    }
+
     doc.fillColor('#ffffff')
        .fontSize(22).font('Helvetica-Bold')
-       .text(bizName, 50, 22);
+       .text(bizName, textX, 22);
     doc.fontSize(10).font('Helvetica')
        .fillColor('#93c5fd')
-       .text('Water Can Delivery Management', 50, 48);
+       .text('Water Can Delivery Management', textX, 48);
 
-    doc.rect(50, 64, 130, 18).fill('#ffffff').fillOpacity(0.15);
-    doc.fillColor('#ffffff').fontSize(9).font('Helvetica-Bold')
-       .text('MONTHLY INVOICE', 55, 68);
+    // fillOpacity must be set BEFORE the fill it applies to, not after — the
+    // previous ordering filled this badge fully opaque, then drew white text
+    // at 15% opacity, rendering as an invisible white-on-white box.
+    doc.fillOpacity(0.15).rect(textX, 64, 130, 18).fill('#ffffff');
     doc.fillOpacity(1);
+    doc.fillColor('#ffffff').fontSize(9).font('Helvetica-Bold')
+       .text('MONTHLY INVOICE', textX + 5, 68);
 
     const boxX = W - 220;
     doc.fillColor('#ffffff').fontSize(8).font('Helvetica')
@@ -130,31 +148,42 @@ async function generateClientMonthPDF(clientId, month, year) {
        .text(`Driver: ${billing.driverName}`, periodX + 12, infoY + 78);
 
     // ── DELIVERY / INVOICE TABLE ───────────────────────────────────────────────
-    const tableY = infoY + 118;
-    const col    = { date: 50, bottles: 210, rate: 300, amount: 390, status: 470 };
+    // Columns are given explicit x/width so numeric columns can be properly
+    // right-aligned rather than left-anchored text at a fixed x.
+    const tableY   = infoY + 118;
+    const tableL   = 50;
+    const tableR   = W - 50;
+    const col = {
+      date:    { x: tableL,       w: 130 },
+      bottles: { x: tableL + 130, w: 80  },
+      rate:    { x: tableL + 210, w: 90  },
+      amount:  { x: tableL + 300, w: 100 },
+      status:  { x: tableL + 400, w: tableR - (tableL + 400) },
+    };
 
-    doc.rect(50, tableY, W - 100, 22).fill(BRAND_BLUE);
+    doc.rect(tableL, tableY, tableR - tableL, 22).fill(BRAND_BLUE);
     doc.fillColor('#ffffff').fontSize(8).font('Helvetica-Bold')
-       .text('DATE',    col.date,    tableY + 7)
-       .text('BOTTLES', col.bottles, tableY + 7)
-       .text('RATE',    col.rate,    tableY + 7)
-       .text('AMOUNT',  col.amount,  tableY + 7)
-       .text('STATUS',  col.status,  tableY + 7);
+       .text('DATE',    col.date.x    + 8, tableY + 7)
+       .text('BOTTLES', col.bottles.x,     tableY + 7, { width: col.bottles.w - 8, align: 'right' })
+       .text('RATE',    col.rate.x,        tableY + 7, { width: col.rate.w    - 8, align: 'right' })
+       .text('AMOUNT',  col.amount.x,      tableY + 7, { width: col.amount.w  - 8, align: 'right' })
+       .text('STATUS',  col.status.x,      tableY + 7, { width: col.status.w, align: 'center' });
 
     let rowY = tableY + 22;
 
     billing.deliveries.forEach((d, i) => {
       const bg = i % 2 === 0 ? '#ffffff' : '#f8fafc';
-      doc.rect(50, rowY, W - 100, 20).fill(bg);
+      doc.rect(tableL, rowY, tableR - tableL, 20).fill(bg)
+         .rect(tableL, rowY, tableR - tableL, 20).stroke(BORDER);
 
       doc.fillColor(DARK).fontSize(8).font('Helvetica')
-         .text(fmtDate(d.date),              col.date,    rowY + 6)
-         .text(String(d.bottles),            col.bottles, rowY + 6)
-         .text(`Rs.${d.rate.toFixed(0)}`,    col.rate,    rowY + 6)
-         .text(`Rs.${d.amount.toFixed(2)}`,  col.amount,  rowY + 6)
+         .text(fmtDate(d.date), col.date.x + 8, rowY + 6)
+         .text(String(d.bottles),           col.bottles.x, rowY + 6, { width: col.bottles.w - 8, align: 'right' })
+         .text(`Rs.${d.rate.toFixed(0)}`,   col.rate.x,    rowY + 6, { width: col.rate.w    - 8, align: 'right' })
+         .text(`Rs.${d.amount.toFixed(2)}`, col.amount.x,  rowY + 6, { width: col.amount.w  - 8, align: 'right' })
          .fillColor(d.isPaid ? '#16a34a' : Number(d.amountPaid) > 0 ? '#d97706' : '#dc2626')
          .font('Helvetica-Bold')
-         .text(d.isPaid ? 'Paid' : Number(d.amountPaid) > 0 ? 'Partial' : 'Unpaid', col.status, rowY + 6);
+         .text(d.isPaid ? 'Paid' : Number(d.amountPaid) > 0 ? 'Partial' : 'Unpaid', col.status.x, rowY + 6, { width: col.status.w, align: 'center' });
 
       rowY += 20;
 
@@ -165,15 +194,15 @@ async function generateClientMonthPDF(clientId, month, year) {
     });
 
     // Subtotal row
-    doc.rect(50, rowY, W - 100, 22).fill('#e2e8f0');
+    doc.rect(tableL, rowY, tableR - tableL, 22).fill('#e2e8f0')
+       .rect(tableL, rowY, tableR - tableL, 22).stroke(BORDER);
     doc.fillColor(DARK).fontSize(8).font('Helvetica-Bold')
-       .text('SUBTOTAL', col.date, rowY + 7)
-       .text(String(billing.totalBottles), col.bottles, rowY + 7)
-       .text('', col.rate, rowY + 7)
-       .text(`Rs.${billing.totalBilled.toFixed(2)}`, col.amount, rowY + 7);
+       .text('SUBTOTAL', col.date.x + 8, rowY + 7)
+       .text(String(billing.totalBottles), col.bottles.x, rowY + 7, { width: col.bottles.w - 8, align: 'right' })
+       .text(`Rs.${billing.totalBilled.toFixed(2)}`, col.amount.x, rowY + 7, { width: col.amount.w - 8, align: 'right' });
     rowY += 22;
 
-    doc.moveTo(50, rowY + 8).lineTo(W - 50, rowY + 8).stroke('#e2e8f0');
+    doc.moveTo(tableL, rowY + 8).lineTo(tableR, rowY + 8).stroke(BORDER);
     rowY += 20;
 
     // ── BILLING SUMMARY ───────────────────────────────────────────────────────
@@ -222,13 +251,22 @@ async function generateClientMonthPDF(clientId, month, year) {
     rowY += 138;
 
     // ── FOOTER ────────────────────────────────────────────────────────────────
+    // The footer band deliberately sits in the page's bottom margin area, so
+    // PDFKit's automatic pagination (which checks new text against
+    // page.margins.bottom) would otherwise silently insert 1-2 blank pages
+    // here — temporarily zero the bottom margin while drawing it.
     const footerY = Math.max(rowY + 20, doc.page.height - 60);
+    const savedBottomMargin = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
+
     doc.rect(0, footerY, W, 50).fill(BRAND_BLUE);
     doc.fillColor('#ffffff').fontSize(9).font('Helvetica-Bold')
-       .text('Thank you for your business!', 0, footerY + 10, { align: 'center', width: W });
+       .text('Thank you for your business!', 0, footerY + 10, { align: 'center', width: W, lineBreak: false });
     doc.fontSize(7).font('Helvetica').fillColor('#93c5fd')
        .text(`${bizName} · Water Can Delivery Management`, 0, footerY + 26,
-             { align: 'center', width: W });
+             { align: 'center', width: W, lineBreak: false });
+
+    doc.page.margins.bottom = savedBottomMargin;
 
     doc.end();
   });

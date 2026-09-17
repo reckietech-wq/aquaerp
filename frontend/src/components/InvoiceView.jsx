@@ -1,12 +1,13 @@
 import { useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Share2, X, Droplets, CheckCircle2 } from 'lucide-react';
+import { Share2, X, CheckCircle2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 function fmtDate(d) {
-  return new Date(d).toLocaleDateString('en-IN', {
-    day: '2-digit', month: 'long', year: 'numeric',
-  });
+  const dt = new Date(d);
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${dt.getFullYear()}`;
 }
 
 function fmtRupee(n) {
@@ -57,12 +58,12 @@ export default function InvoiceView({ invoice, onClose }) {
 
         {/* Invoice header */}
         <div className="bg-blue-900 px-5 py-4 text-white">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Droplets size={20} className="text-blue-300" />
-              <span className="font-bold text-lg tracking-tight">Gajanan Aqua</span>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <img src="/logo.png" alt="Gajanan Aqua" className="w-9 h-9 rounded-lg object-cover shrink-0" />
+              <span className="font-bold text-lg tracking-tight truncate">Gajanan Aqua</span>
             </div>
-            <div className="text-right">
+            <div className="text-right shrink-0">
               <p className="text-xs text-blue-300 font-semibold uppercase tracking-widest">Tax Invoice</p>
               <p className="text-sm font-bold mt-0.5">{invoiceNumber}</p>
             </div>
@@ -75,8 +76,8 @@ export default function InvoiceView({ invoice, onClose }) {
         {/* Client info */}
         <div className="px-5 py-4 border-b border-slate-100">
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Bill To</p>
-          <p className="font-bold text-slate-800 text-base">{client.name}</p>
-          <p className="text-slate-500 text-sm mt-0.5 leading-relaxed">{client.address}</p>
+          <p className="font-bold text-slate-800 text-base break-words">{client.name}</p>
+          <p className="text-slate-500 text-sm mt-0.5 leading-relaxed break-words">{client.address}</p>
         </div>
 
         {/* Line items table */}
