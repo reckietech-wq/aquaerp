@@ -5,16 +5,36 @@ const path        = require('path');
 const { getClientMonthBilling } = require('./billingService');
 const { formatIstDate } = require('../lib/dateUtils');
 
-// ─── constants ────────────────────────────────────────────────────────────────
+// ─── layout grid ────────────────────────────────────────────────────────────
+// Every x/y below is derived from these few constants, so the whole layout
+// can be re-tuned from one place instead of chasing ad-hoc coordinates.
 
-const UPLOADS_DIR = path.join(__dirname, '../../uploads/invoices');
+const PAGE_SIZE   = 'A4';
+const MARGIN      = 40;
+const PAGE_W      = 595.28; // A4 pt
+const PAGE_H      = 841.89;
+const CONTENT_X   = MARGIN;
+const CONTENT_W   = PAGE_W - MARGIN * 2;
+const CONTENT_R   = MARGIN + CONTENT_W;
+
+const COLOR = {
+  brand:     '#1e3a5f',
+  brandLite: '#eef2f8',
+  gray:      '#64748b',
+  grayLite:  '#94a3b8',
+  dark:      '#1e293b',
+  border:    '#d8dee8',
+  headerBg:  '#eef1f6',
+  green:     '#16a34a',
+  amber:     '#b45309',
+  red:       '#dc2626',
+};
+
+const FONT = { regular: 'Helvetica', bold: 'Helvetica-Bold' };
+
+const UPLOADS_DIR      = path.join(__dirname, '../../uploads/invoices');
 const FALLBACK_QR_PATH = path.join(__dirname, '../../assets/payment-qr.png');
-const LOGO_PATH = path.join(__dirname, '../../assets/logo.png');
-const BRAND_BLUE  = '#1e3a5f';
-const BRAND_LIGHT = '#e8f0fe';
-const GRAY        = '#64748b';
-const DARK        = '#1e293b';
-const BORDER      = '#cbd5e1';
+const LOGO_PATH        = path.join(__dirname, '../../assets/logo.png');
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -22,13 +42,34 @@ const MONTH_NAMES = [
 ];
 
 const STATUS_LABEL = { PAID: 'PAID', PARTIAL: 'PARTIALLY PAID', UNPAID: 'UNPAID' };
-const STATUS_COLOR = { PAID: '#86efac', PARTIAL: '#fde68a', UNPAID: '#fca5a5' };
+const STATUS_COLOR = { PAID: COLOR.green, PARTIAL: COLOR.amber, UNPAID: COLOR.red };
 
+// ── item table column grid — x positions/widths sum to CONTENT_W ───────────
+const COL = (() => {
+  const dateW = 85;
+  const qtyW  = 60;
+  const rateW = 85;
+  const amtW  = 100;
+  const descW = CONTENT_W - dateW - qtyW - rateW - amtW;
+  let x = CONTENT_X;
+  const date = { x, w: dateW }; x += dateW;
+  const desc = { x, w: descW }; x += descW;
+  const qty  = { x, w: qtyW };  x += qtyW;
+  const rate = { x, w: rateW }; x += rateW;
+  const amt  = { x, w: amtW };
+  return { date, desc, qty, rate, amt };
+})();
+
+const ROW_H    = 22;
+const HEADER_H = 24;
+
+// PDFKit's standard 14 fonts (WinAnsi encoding) have no ₹ glyph — it renders
+// as a garbled superscript. "Rs." is the safe, always-correct alternative.
 function fmtRupee(n) {
   return `Rs. ${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-// dd/mm/yyyy in IST — consistent with the web UI's invoice/statement views
+// dd/mm/yyyy in IST — the single date-formatting helper used throughout.
 function fmtDate(d) {
   return formatIstDate(d);
 }
@@ -37,10 +78,143 @@ function ensureDir() {
   if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
+// Right-aligned "label ... value" pair inside a fixed box, used for the
+// totals mini-table so every ₹ figure lines up on the same vertical edge.
+function totalsLine(doc, x, w, y, label, value, opts = {}) {
+  const { bold = false, size = 9, color = COLOR.dark, labelColor = COLOR.gray } = opts;
+  const labelW = w * 0.6;
+  doc.font(bold ? FONT.bold : FONT.regular).fontSize(size).fillColor(labelColor)
+     .text(label, x, y, { width: labelW, align: 'right' });
+  doc.font(bold ? FONT.bold : FONT.regular).fontSize(size).fillColor(color)
+     .text(value, x + labelW + 8, y, { width: w - labelW - 8, align: 'right' });
+}
+
+// ─── header band ────────────────────────────────────────────────────────────
+function drawHeader(doc, { invoiceNo, dateLabel, docLabel, bizName }) {
+  const y = MARGIN;
+  let textX = CONTENT_X;
+
+  if (fs.existsSync(LOGO_PATH)) {
+    try {
+      doc.image(LOGO_PATH, CONTENT_X, y, { width: 50, height: 50 });
+      textX = CONTENT_X + 62;
+    } catch (err) {
+      console.error('[pdfService] logo embed failed:', err.message);
+    }
+  }
+
+  doc.fillColor(COLOR.dark).font(FONT.bold).fontSize(18)
+     .text(bizName, textX, y + 3, { lineBreak: false });
+  doc.fillColor(COLOR.gray).font(FONT.regular).fontSize(9)
+     .text('Water Supply Co.', textX, y + 25, { lineBreak: false });
+
+  // Right-aligned invoice meta block
+  const metaW = 220;
+  const metaX = CONTENT_R - metaW;
+  doc.fillColor(COLOR.brand).font(FONT.bold).fontSize(13)
+     .text(docLabel, metaX, y + 2, { width: metaW, align: 'right' });
+  doc.fillColor(COLOR.gray).font(FONT.regular).fontSize(9)
+     .text(`Invoice No: ${invoiceNo}`, metaX, y + 21, { width: metaW, align: 'right' })
+     .text(`Date: ${dateLabel}`, metaX, y + 34, { width: metaW, align: 'right' });
+
+  const ruleY = y + 58;
+  doc.moveTo(CONTENT_X, ruleY).lineTo(CONTENT_R, ruleY).lineWidth(0.5).strokeColor(COLOR.border).stroke();
+  return ruleY + 16;
+}
+
+// ─── parties row ────────────────────────────────────────────────────────────
+function drawParties(doc, y, { clientName, address, route, upiId, payeeName, singleAmount }) {
+  const colW = CONTENT_W / 2 - 10;
+  const leftX  = CONTENT_X;
+  const rightX = CONTENT_X + CONTENT_W / 2 + 10;
+
+  doc.fillColor(COLOR.grayLite).font(FONT.bold).fontSize(8).text('BILL TO', leftX, y);
+  doc.fillColor(COLOR.dark).font(FONT.bold).fontSize(11)
+     .text(clientName, leftX, y + 13, { width: colW });
+  const nameH = doc.heightOfString(clientName, { width: colW, font: FONT.bold, fontSize: 11 });
+  doc.fillColor(COLOR.gray).font(FONT.regular).fontSize(9)
+     .text(address, leftX, y + 13 + nameH + 3, { width: colW });
+  const addrH = doc.heightOfString(address, { width: colW, font: FONT.regular, fontSize: 9 });
+  if (route) {
+    doc.fillColor(COLOR.gray).font(FONT.regular).fontSize(9)
+       .text(`Route: ${route}`, leftX, y + 13 + nameH + 3 + addrH + 2, { width: colW });
+  }
+
+  doc.fillColor(COLOR.grayLite).font(FONT.bold).fontSize(8).text('PAYMENT DETAILS', rightX, y);
+  doc.fillColor(COLOR.dark).font(FONT.regular).fontSize(9)
+     .text(`UPI ID: ${upiId}`, rightX, y + 13, { width: colW })
+     .text(`Payee: ${payeeName}`, rightX, y + 27, { width: colW });
+  if (singleAmount != null) {
+    doc.fillColor(COLOR.dark).font(FONT.bold).fontSize(9)
+       .text(`Amount: ${fmtRupee(singleAmount)}`, rightX, y + 41, { width: colW });
+  }
+
+  const leftBottom  = y + 13 + nameH + 3 + addrH + (route ? 14 : 0);
+  const rightBottom = y + 13 + 41 + (singleAmount != null ? 14 : 0);
+  return Math.max(leftBottom, rightBottom) + 16;
+}
+
+// ─── items table ────────────────────────────────────────────────────────────
+function drawTableHeader(doc, y) {
+  doc.rect(CONTENT_X, y, CONTENT_W, HEADER_H).fill(COLOR.headerBg);
+  doc.fillColor(COLOR.dark).font(FONT.bold).fontSize(9);
+  const ty = y + HEADER_H / 2 - 4.5;
+  doc.text('DATE', COL.date.x + 8, ty, { width: COL.date.w - 8 });
+  doc.text('DESCRIPTION', COL.desc.x, ty, { width: COL.desc.w });
+  doc.text('QTY', COL.qty.x, ty, { width: COL.qty.w - 8, align: 'right' });
+  doc.text('RATE', COL.rate.x, ty, { width: COL.rate.w - 8, align: 'right' });
+  doc.text('AMOUNT', COL.amt.x, ty, { width: COL.amt.w - 8, align: 'right' });
+  doc.moveTo(CONTENT_X, y + HEADER_H).lineTo(CONTENT_R, y + HEADER_H)
+     .lineWidth(0.5).strokeColor(COLOR.border).stroke();
+  return y + HEADER_H;
+}
+
+function ensureSpace(doc, y, needed, onNewPage) {
+  if (y + needed > PAGE_H - MARGIN - FOOTER_RESERVE) {
+    doc.addPage();
+    return onNewPage(doc);
+  }
+  return y;
+}
+
+const FOOTER_RESERVE = 40;
+
+function drawRow(doc, y, { date, desc, qty, rate, amount }, zebra) {
+  if (zebra) doc.rect(CONTENT_X, y, CONTENT_W, ROW_H).fill('#f8fafc');
+  const ty = y + ROW_H / 2 - 4.5;
+  doc.fillColor(COLOR.dark).font(FONT.regular).fontSize(9);
+  doc.text(date, COL.date.x + 8, ty, { width: COL.date.w - 8, height: ROW_H, ellipsis: true });
+  doc.text(desc, COL.desc.x, ty, { width: COL.desc.w - 6, height: ROW_H, ellipsis: true });
+  doc.text(qty,  COL.qty.x,  ty, { width: COL.qty.w  - 8, align: 'right' });
+  doc.text(rate, COL.rate.x, ty, { width: COL.rate.w - 8, align: 'right' });
+  doc.text(amount, COL.amt.x, ty, { width: COL.amt.w - 8, align: 'right' });
+  doc.moveTo(CONTENT_X, y + ROW_H).lineTo(CONTENT_R, y + ROW_H)
+     .lineWidth(0.5).strokeColor(COLOR.border).stroke();
+}
+
+// ─── footer ─────────────────────────────────────────────────────────────────
+function drawFooter(doc, bizName) {
+  // The footer sits inside the page's bottom margin band, so PDFKit's
+  // automatic pagination (which checks new text against page.margins.bottom)
+  // would otherwise silently insert a blank page here — zero the bottom
+  // margin only while drawing it.
+  const savedBottomMargin = doc.page.margins.bottom;
+  doc.page.margins.bottom = 0;
+
+  const y = PAGE_H - MARGIN - 26;
+  doc.moveTo(CONTENT_X, y).lineTo(CONTENT_R, y).lineWidth(0.5).strokeColor(COLOR.border).stroke();
+  doc.fillColor(COLOR.gray).font(FONT.regular).fontSize(9)
+     .text('Thank you for your business!', CONTENT_X, y + 8, { width: CONTENT_W, align: 'center', lineBreak: false });
+  doc.fillColor(COLOR.grayLite).font(FONT.regular).fontSize(7)
+     .text(bizName, CONTENT_X, y + 20, { width: CONTENT_W, align: 'center', lineBreak: false });
+
+  doc.page.margins.bottom = savedBottomMargin;
+}
+
 // ─── generateClientMonthPDF ───────────────────────────────────────────────────
-// Builds a monthly invoice PDF straight from live Invoice + Delivery data
-// (via billingService) — no MonthlyBill row involved, so the PDF's status and
-// totals can never drift from what Invoices/Statement show.
+// Builds a monthly invoice/statement PDF straight from live Invoice +
+// Delivery data (via billingService) — no MonthlyBill row involved, so the
+// PDF's status and totals can never drift from what Invoices/Statement show.
 
 async function generateClientMonthPDF(clientId, month, year) {
   ensureDir();
@@ -55,217 +229,112 @@ async function generateClientMonthPDF(clientId, month, year) {
   const remaining = parseFloat((billing.totalBilled - billing.totalPaid).toFixed(2));
   const upiString = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(payeeName)}&am=${Math.max(remaining, 0).toFixed(2)}&cu=INR&tn=${invoiceNo}`;
 
-  // ── Generate QR buffer ──────────────────────────────────────────────────────
   let qrBuffer;
   try {
     qrBuffer = await QRCode.toBuffer(upiString, {
-      type:  'png',
-      width: 200,
-      margin: 1,
-      color: { dark: '#000000', light: '#ffffff' },
+      type: 'png', width: 220, margin: 1, color: { dark: '#000000', light: '#ffffff' },
     });
   } catch (err) {
     console.error('[pdfService] QR generation failed, using fallback image:', err.message);
     qrBuffer = fs.existsSync(FALLBACK_QR_PATH) ? fs.readFileSync(FALLBACK_QR_PATH) : null;
   }
 
-  // ── Build PDF ───────────────────────────────────────────────────────────────
+  const isSingle = billing.deliveries.length === 1;
+  const docLabel = isSingle ? 'TAX INVOICE' : 'STATEMENT';
+
   const outPath = path.join(UPLOADS_DIR, `billing-${clientId}-${year}-${String(month).padStart(2, '0')}.pdf`);
-  const doc     = new PDFDocument({ size: 'A4', margin: 50 });
-  const stream  = fs.createWriteStream(outPath);
+  const doc    = new PDFDocument({ size: PAGE_SIZE, margin: MARGIN });
+  const stream = fs.createWriteStream(outPath);
 
   await new Promise((resolve, reject) => {
     doc.pipe(stream);
     stream.on('finish', resolve);
-    stream.on('error',  reject);
+    stream.on('error', reject);
 
-    const W = doc.page.width;
-
-    // ── HEADER ────────────────────────────────────────────────────────────────
-    doc.rect(0, 0, W, 90).fill(BRAND_BLUE);
-
-    // Logo (falls back gracefully — text-only header — if the asset is missing)
-    let textX = 50;
-    if (fs.existsSync(LOGO_PATH)) {
-      try {
-        doc.image(LOGO_PATH, 50, 20, { width: 48, height: 48 });
-        textX = 108;
-      } catch (err) {
-        console.error('[pdfService] logo embed failed:', err.message);
-      }
-    }
-
-    doc.fillColor('#ffffff')
-       .fontSize(22).font('Helvetica-Bold')
-       .text(bizName, textX, 22);
-    doc.fontSize(10).font('Helvetica')
-       .fillColor('#93c5fd')
-       .text('Water Can Delivery Management', textX, 48);
-
-    // fillOpacity must be set BEFORE the fill it applies to, not after — the
-    // previous ordering filled this badge fully opaque, then drew white text
-    // at 15% opacity, rendering as an invisible white-on-white box.
-    doc.fillOpacity(0.15).rect(textX, 64, 130, 18).fill('#ffffff');
-    doc.fillOpacity(1);
-    doc.fillColor('#ffffff').fontSize(9).font('Helvetica-Bold')
-       .text('MONTHLY INVOICE', textX + 5, 68);
-
-    const boxX = W - 220;
-    doc.fillColor('#ffffff').fontSize(8).font('Helvetica')
-       .text(`Invoice No:`, boxX, 18, { continued: true })
-       .font('Helvetica-Bold').text(`  ${invoiceNo}`)
-       .font('Helvetica').text(`Month:`, boxX, 36, { continued: true })
-       .font('Helvetica-Bold').text(`  ${MONTH_NAMES[month]} ${year}`)
-       .font('Helvetica').text(`Generated:`, boxX, 54, { continued: true })
-       .font('Helvetica-Bold').text(`  ${fmtDate(new Date())}`)
-       .font('Helvetica').text(`Status:`, boxX, 72, { continued: true })
-       .font('Helvetica-Bold').fillColor(STATUS_COLOR[billing.status])
-       .text(`  ${STATUS_LABEL[billing.status]}`);
-
-    doc.fillOpacity(1).fillColor(DARK);
-
-    // ── CLIENT INFO BOX ───────────────────────────────────────────────────────
-    const infoY = 110;
-    doc.rect(50, infoY, 240, 60).fill(BRAND_LIGHT).stroke('#c7d2fe');
-    doc.fillColor(GRAY).fontSize(7).font('Helvetica-Bold')
-       .text('BILL TO', 62, infoY + 10);
-    doc.fillColor(DARK).fontSize(11).font('Helvetica-Bold')
-       .text(billing.clientName, 62, infoY + 22);
-    doc.fillColor(GRAY).fontSize(8).font('Helvetica')
-       .text(billing.address, 62, infoY + 38, { width: 216 });
-
-    const periodX = W - 240;
-    doc.rect(periodX, infoY, 190, 100).fill(BRAND_LIGHT).stroke('#c7d2fe');
-    doc.fillColor(GRAY).fontSize(7).font('Helvetica-Bold')
-       .text('BILLING PERIOD', periodX + 12, infoY + 10);
-    doc.fillColor(DARK).fontSize(13).font('Helvetica-Bold')
-       .text(`${MONTH_NAMES[month]} ${year}`, periodX + 12, infoY + 24);
-    doc.fillColor(GRAY).fontSize(8).font('Helvetica')
-       .text(`Deliveries: ${billing.deliveries.length}`, periodX + 12, infoY + 50)
-       .text(`Total Bottles: ${billing.totalBottles}`, periodX + 12, infoY + 64)
-       .text(`Driver: ${billing.driverName}`, periodX + 12, infoY + 78);
-
-    // ── DELIVERY / INVOICE TABLE ───────────────────────────────────────────────
-    // Columns are given explicit x/width so numeric columns can be properly
-    // right-aligned rather than left-anchored text at a fixed x.
-    const tableY   = infoY + 118;
-    const tableL   = 50;
-    const tableR   = W - 50;
-    const col = {
-      date:    { x: tableL,       w: 130 },
-      bottles: { x: tableL + 130, w: 80  },
-      rate:    { x: tableL + 210, w: 90  },
-      amount:  { x: tableL + 300, w: 100 },
-      status:  { x: tableL + 400, w: tableR - (tableL + 400) },
+    // ── page 1 header/parties/table header ────────────────────────────────
+    const startNewPage = () => {
+      let y = drawHeader(doc, { invoiceNo, dateLabel: fmtDate(new Date()), docLabel, bizName });
+      return drawTableHeader(doc, y);
     };
 
-    doc.rect(tableL, tableY, tableR - tableL, 22).fill(BRAND_BLUE);
-    doc.fillColor('#ffffff').fontSize(8).font('Helvetica-Bold')
-       .text('DATE',    col.date.x    + 8, tableY + 7)
-       .text('BOTTLES', col.bottles.x,     tableY + 7, { width: col.bottles.w - 8, align: 'right' })
-       .text('RATE',    col.rate.x,        tableY + 7, { width: col.rate.w    - 8, align: 'right' })
-       .text('AMOUNT',  col.amount.x,      tableY + 7, { width: col.amount.w  - 8, align: 'right' })
-       .text('STATUS',  col.status.x,      tableY + 7, { width: col.status.w, align: 'center' });
-
-    let rowY = tableY + 22;
+    let y = drawHeader(doc, { invoiceNo, dateLabel: fmtDate(new Date()), docLabel, bizName });
+    y = drawParties(doc, y, {
+      clientName: billing.clientName,
+      address:    billing.address,
+      route:      billing.route,
+      upiId,
+      payeeName,
+      singleAmount: isSingle ? billing.deliveries[0].amount : null,
+    });
+    y = drawTableHeader(doc, y);
 
     billing.deliveries.forEach((d, i) => {
-      const bg = i % 2 === 0 ? '#ffffff' : '#f8fafc';
-      doc.rect(tableL, rowY, tableR - tableL, 20).fill(bg)
-         .rect(tableL, rowY, tableR - tableL, 20).stroke(BORDER);
-
-      doc.fillColor(DARK).fontSize(8).font('Helvetica')
-         .text(fmtDate(d.date), col.date.x + 8, rowY + 6)
-         .text(String(d.bottles),           col.bottles.x, rowY + 6, { width: col.bottles.w - 8, align: 'right' })
-         .text(`Rs.${d.rate.toFixed(0)}`,   col.rate.x,    rowY + 6, { width: col.rate.w    - 8, align: 'right' })
-         .text(`Rs.${d.amount.toFixed(2)}`, col.amount.x,  rowY + 6, { width: col.amount.w  - 8, align: 'right' })
-         .fillColor(d.isPaid ? '#16a34a' : Number(d.amountPaid) > 0 ? '#d97706' : '#dc2626')
-         .font('Helvetica-Bold')
-         .text(d.isPaid ? 'Paid' : Number(d.amountPaid) > 0 ? 'Partial' : 'Unpaid', col.status.x, rowY + 6, { width: col.status.w, align: 'center' });
-
-      rowY += 20;
-
-      if (rowY > doc.page.height - 230) {
-        doc.addPage();
-        rowY = 50;
-      }
+      y = ensureSpace(doc, y, ROW_H, startNewPage);
+      drawRow(doc, y, {
+        date:   fmtDate(d.date),
+        desc:   'Water can delivery',
+        qty:    String(d.bottles),
+        rate:   fmtRupee(d.rate),
+        amount: fmtRupee(d.amount),
+      }, i % 2 === 1);
+      y += ROW_H;
     });
 
     // Subtotal row
-    doc.rect(tableL, rowY, tableR - tableL, 22).fill('#e2e8f0')
-       .rect(tableL, rowY, tableR - tableL, 22).stroke(BORDER);
-    doc.fillColor(DARK).fontSize(8).font('Helvetica-Bold')
-       .text('SUBTOTAL', col.date.x + 8, rowY + 7)
-       .text(String(billing.totalBottles), col.bottles.x, rowY + 7, { width: col.bottles.w - 8, align: 'right' })
-       .text(`Rs.${billing.totalBilled.toFixed(2)}`, col.amount.x, rowY + 7, { width: col.amount.w - 8, align: 'right' });
-    rowY += 22;
+    y = ensureSpace(doc, y, ROW_H, startNewPage);
+    doc.rect(CONTENT_X, y, CONTENT_W, ROW_H).fill(COLOR.headerBg);
+    const sty = y + ROW_H / 2 - 4.5;
+    doc.fillColor(COLOR.dark).font(FONT.bold).fontSize(9)
+       .text('SUBTOTAL', COL.date.x + 8, sty, { width: COL.desc.w + COL.date.w - 8 })
+       .text(String(billing.totalBottles), COL.qty.x, sty, { width: COL.qty.w - 8, align: 'right' })
+       .text(fmtRupee(billing.totalBilled), COL.amt.x, sty, { width: COL.amt.w - 8, align: 'right' });
+    doc.moveTo(CONTENT_X, y + ROW_H).lineTo(CONTENT_R, y + ROW_H).lineWidth(0.5).strokeColor(COLOR.border).stroke();
+    y += ROW_H + 16;
 
-    doc.moveTo(tableL, rowY + 8).lineTo(tableR, rowY + 8).stroke(BORDER);
-    rowY += 20;
+    // ── totals block + QR, side by side ─────────────────────────────────
+    const blockH = 130;
+    y = ensureSpace(doc, y, blockH, startNewPage);
 
-    // ── BILLING SUMMARY ───────────────────────────────────────────────────────
-    const summaryX = W - 250;
-    doc.rect(summaryX, rowY, 200, 128).fill(BRAND_LIGHT).stroke('#c7d2fe');
+    const qrX = CONTENT_X;
+    const qrW = 190;
+    const totW = CONTENT_W - qrW - 20;
+    const totX = CONTENT_R - totW;
 
-    doc.fillColor(GRAY).fontSize(8).font('Helvetica')
-       .text('Total Billed (this month):', summaryX + 12, rowY + 14, { continued: true })
-       .font('Helvetica-Bold').fillColor(DARK)
-       .text(`  ${fmtRupee(billing.totalBilled)}`, { align: 'right', width: 170 });
-
-    doc.fillColor(GRAY).fontSize(8).font('Helvetica')
-       .text('Paid (this month):', summaryX + 12, rowY + 30, { continued: true })
-       .font('Helvetica-Bold').fillColor('#16a34a')
-       .text(`  ${fmtRupee(billing.totalPaid)}`, { align: 'right', width: 170 });
-
-    // Divider
-    doc.moveTo(summaryX + 12, rowY + 50).lineTo(summaryX + 188, rowY + 50)
-       .lineWidth(1.5).stroke(BRAND_BLUE);
-
-    doc.fillColor(BRAND_BLUE).fontSize(11).font('Helvetica-Bold')
-       .text('CLIENT OUTSTANDING', summaryX + 12, rowY + 58);
-    doc.fontSize(14).fillColor(billing.outstanding > 0 ? '#dc2626' : '#16a34a')
-       .text(fmtRupee(billing.outstanding), summaryX + 12, rowY + 76,
-             { align: 'right', width: 176 });
-    doc.fontSize(7).fillColor(GRAY).font('Helvetica')
-       .text('(client\'s total running balance, not just this month)', summaryX + 12, rowY + 96, { width: 176 });
-
-    // ── PAYMENT QR ────────────────────────────────────────────────────────────
-    const qrAreaX = 50;
-    const qrAreaY = rowY;
-
-    doc.rect(qrAreaX, qrAreaY, 180, 128).fill(BRAND_LIGHT).stroke('#c7d2fe');
-    doc.fillColor(GRAY).fontSize(7).font('Helvetica-Bold')
-       .text('SCAN TO PAY', qrAreaX + 55, qrAreaY + 8);
-
+    // QR panel
+    doc.rect(qrX, y, qrW, blockH).fill(COLOR.brandLite).stroke(COLOR.border);
+    doc.fillColor(COLOR.grayLite).font(FONT.bold).fontSize(8)
+       .text('SCAN TO PAY', qrX, y + 10, { width: qrW, align: 'center' });
     if (qrBuffer) {
-      doc.image(qrBuffer, qrAreaX + 40, qrAreaY + 18, { width: 80, height: 80 });
+      doc.image(qrBuffer, qrX + (qrW - 110) / 2, y + 22, { width: 110, height: 110 - 24 });
     }
+    doc.fillColor(COLOR.dark).font(FONT.bold).fontSize(8)
+       .text(`UPI: ${upiId}`, qrX, y + blockH - 24, { width: qrW, align: 'center' });
+    doc.fillColor(COLOR.gray).font(FONT.regular).fontSize(7)
+       .text(payeeName, qrX, y + blockH - 13, { width: qrW, align: 'center' });
 
-    doc.fillColor(DARK).fontSize(7).font('Helvetica-Bold')
-       .text(`UPI: ${upiId}`, qrAreaX + 12, qrAreaY + 100, { width: 156, align: 'center' });
-    doc.fillColor(GRAY).fontSize(6).font('Helvetica')
-       .text(payeeName, qrAreaX + 12, qrAreaY + 112, { width: 156, align: 'center' });
+    // Totals panel
+    doc.rect(totX, y, totW, blockH).fill('#ffffff').stroke(COLOR.border);
+    let ty2 = y + 16;
+    const prevOutstanding = parseFloat((billing.outstanding - remaining).toFixed(2));
+    totalsLine(doc, totX + 14, totW - 28, ty2, 'Previous Outstanding:', fmtRupee(Math.max(prevOutstanding, 0)));
+    ty2 += 16;
+    totalsLine(doc, totX + 14, totW - 28, ty2, 'This Period:', fmtRupee(billing.totalBilled));
+    ty2 += 16;
+    if (billing.totalPaid > 0) {
+      totalsLine(doc, totX + 14, totW - 28, ty2, 'Amount Paid:', fmtRupee(billing.totalPaid), { color: COLOR.green });
+      ty2 += 16;
+    }
+    doc.moveTo(totX + 14, ty2 + 4).lineTo(totX + totW - 14, ty2 + 4)
+       .lineWidth(1).strokeColor(COLOR.brand).stroke();
+    ty2 += 14;
+    totalsLine(doc, totX + 14, totW - 28, ty2, 'TOTAL DUE:', fmtRupee(Math.max(billing.outstanding, 0)), {
+      bold: true, size: 13, color: billing.outstanding > 0 ? COLOR.red : COLOR.green, labelColor: COLOR.dark,
+    });
+    ty2 += 22;
+    doc.fillColor(STATUS_COLOR[billing.status]).font(FONT.bold).fontSize(9)
+       .text(STATUS_LABEL[billing.status], totX + 14, ty2, { width: totW - 28, align: 'right' });
 
-    rowY += 138;
-
-    // ── FOOTER ────────────────────────────────────────────────────────────────
-    // The footer band deliberately sits in the page's bottom margin area, so
-    // PDFKit's automatic pagination (which checks new text against
-    // page.margins.bottom) would otherwise silently insert 1-2 blank pages
-    // here — temporarily zero the bottom margin while drawing it.
-    const footerY = Math.max(rowY + 20, doc.page.height - 60);
-    const savedBottomMargin = doc.page.margins.bottom;
-    doc.page.margins.bottom = 0;
-
-    doc.rect(0, footerY, W, 50).fill(BRAND_BLUE);
-    doc.fillColor('#ffffff').fontSize(9).font('Helvetica-Bold')
-       .text('Thank you for your business!', 0, footerY + 10, { align: 'center', width: W, lineBreak: false });
-    doc.fontSize(7).font('Helvetica').fillColor('#93c5fd')
-       .text(`${bizName} · Water Can Delivery Management`, 0, footerY + 26,
-             { align: 'center', width: W, lineBreak: false });
-
-    doc.page.margins.bottom = savedBottomMargin;
-
+    drawFooter(doc, bizName);
     doc.end();
   });
 
