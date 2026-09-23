@@ -3,6 +3,7 @@ const QRCode      = require('qrcode');
 const fs          = require('fs');
 const path        = require('path');
 const { getClientMonthBilling } = require('./billingService');
+const { formatIstDate } = require('../lib/dateUtils');
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -27,12 +28,9 @@ function fmtRupee(n) {
   return `Rs. ${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-// dd/mm/yyyy — consistent with the web UI's invoice/statement views
+// dd/mm/yyyy in IST — consistent with the web UI's invoice/statement views
 function fmtDate(d) {
-  const dt = new Date(d);
-  const dd = String(dt.getDate()).padStart(2, '0');
-  const mm = String(dt.getMonth() + 1).padStart(2, '0');
-  return `${dd}/${mm}/${dt.getFullYear()}`;
+  return formatIstDate(d);
 }
 
 function ensureDir() {

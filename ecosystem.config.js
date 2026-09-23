@@ -21,6 +21,7 @@ module.exports = {
       // so we only need to tell PM2 the runtime environment flag here
       env_production: {
         NODE_ENV: 'production',
+        TZ: 'Asia/Kolkata',
       },
 
       // PM2 log settings

@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { adjustInventory } = require('../services/inventoryService');
+const { istDayStart, istDayEnd } = require('../lib/dateUtils');
 
 const MAX_PLAUSIBLE_BOTTLES = 1000;
 
@@ -135,12 +136,8 @@ async function listDeliveries(req, res) {
   if (driverId) where.driverId = driverId;
   if (from || to) {
     where.deliveryDate = {};
-    if (from) where.deliveryDate.gte = new Date(from);
-    if (to) {
-      const toDate = new Date(to);
-      toDate.setHours(23, 59, 59, 999);
-      where.deliveryDate.lte = toDate;
-    }
+    if (from) where.deliveryDate.gte = istDayStart(from);
+    if (to) where.deliveryDate.lte = istDayEnd(to);
   }
   if (search) {
     where.client = {

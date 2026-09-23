@@ -1,19 +1,25 @@
 const prisma = require('../lib/prisma');
+const { istMonthStart, currentIstYearMonth } = require('../lib/dateUtils');
 
 // Live billing aggregation, sourced directly from Invoice + Delivery records
 // — no MonthlyBill table involved. This is the single source of truth: paid/
 // unpaid/partial status here is always exactly what Invoices/Statement show,
 // because it's computed from the same Invoice.amountPaid/isPaid fields.
 
+// Bounds of an IST calendar month, so a delivery made late in the IST
+// evening on the last day of the month is still billed into that month.
+// `end` is the exclusive start of the next IST month (matches the original
+// `lt: end` usage below).
 function monthRange(month, year) {
-  const start = new Date(year, month - 1, 1);
-  const end   = new Date(year, month, 1); // exclusive upper bound
+  const start = istMonthStart(year, month);
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear  = month === 12 ? year + 1 : year;
+  const end = istMonthStart(nextYear, nextMonth);
   return { start, end };
 }
 
 function currentMonthYear() {
-  const now = new Date();
-  return { month: now.getMonth() + 1, year: now.getFullYear() };
+  return currentIstYearMonth();
 }
 
 // One client's billing for a calendar month — every invoiced delivery

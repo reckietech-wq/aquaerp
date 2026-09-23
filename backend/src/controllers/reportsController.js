@@ -1,21 +1,27 @@
+const dayjs = require('dayjs');
 const prisma = require('../lib/prisma');
+const { IST, istDayStart, istDayEnd, istMonthStart, currentIstYearMonth } = require('../lib/dateUtils');
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
+// from/to are IST calendar dates (yyyy-mm-dd) — both branches resolve to IST
+// day/month boundaries so they never disagree with each other or with the
+// dashboard/billing boundaries.
 function parseRange(query) {
-  const now = new Date();
-
   if (query.from && query.to) {
     return {
-      start: new Date(query.from + 'T00:00:00.000Z'),
-      end:   new Date(query.to   + 'T23:59:59.999Z'),
+      start: istDayStart(query.from),
+      end:   istDayEnd(query.to),
     };
   }
 
-  // Default: current calendar month
+  // Default: current IST calendar month
+  const { year, month } = currentIstYearMonth();
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear  = month === 12 ? year + 1 : year;
   return {
-    start: new Date(now.getFullYear(), now.getMonth(), 1),
-    end:   new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999),
+    start: istMonthStart(year, month),
+    end:   new Date(istMonthStart(nextYear, nextMonth).getTime() - 1),
   };
 }
 
@@ -192,11 +198,15 @@ async function getSummary(req, res) {
   // Highest value client
   const highestValueClient = [...clientBreakdown].sort((a, b) => b.totalBilled - a.totalBilled)[0] ?? null;
 
-  // ── Monthly trend (last 6 calendar months ending at `end`) ───────────────
+  // ── Monthly trend (last 6 IST calendar months ending at `end`) ───────────
+  const endIst = dayjs(end).tz(IST);
   const monthlyTrend = [];
   for (let i = 5; i >= 0; i--) {
-    const mStart = new Date(end.getFullYear(), end.getMonth() - i, 1);
-    const mEnd   = new Date(end.getFullYear(), end.getMonth() - i + 1, 0, 23, 59, 59, 999);
+    const cursor = endIst.subtract(i, 'month');
+    const mStart = istMonthStart(cursor.year(), cursor.month() + 1);
+    const nextM  = cursor.month() + 1 === 12 ? 1 : cursor.month() + 2;
+    const nextY  = cursor.month() + 1 === 12 ? cursor.year() + 1 : cursor.year();
+    const mEnd   = new Date(istMonthStart(nextY, nextM).getTime() - 1);
 
     const [mDeliveries, mBottles, mRevenue, mClients] = await Promise.all([
       prisma.delivery.count({
@@ -218,8 +228,8 @@ async function getSummary(req, res) {
     ]);
 
     monthlyTrend.push({
-      month:        mStart.getMonth() + 1,
-      year:         mStart.getFullYear(),
+      month:        cursor.month() + 1,
+      year:         cursor.year(),
       deliveries:   mDeliveries,
       bottles:      mBottles._sum.filledBottlesDelivered ?? 0,
       revenue:      parseFloat(mRevenue._sum.amountPaid ?? 0),
@@ -322,10 +332,10 @@ async function getClientSummary(req, res) {
       // Monthly breakdown (bottles + billed, grouped by month/year within range)
       const monthlyMap = {};
       for (const d of deliveries) {
-        const dt = new Date(d.deliveryDate);
-        const key = `${dt.getFullYear()}-${dt.getMonth() + 1}`;
+        const dt = dayjs(d.deliveryDate).tz(IST);
+        const key = `${dt.year()}-${dt.month() + 1}`;
         if (!monthlyMap[key]) {
-          monthlyMap[key] = { year: dt.getFullYear(), month: dt.getMonth() + 1, bottles: 0, deliveries: 0 };
+          monthlyMap[key] = { year: dt.year(), month: dt.month() + 1, bottles: 0, deliveries: 0 };
         }
         monthlyMap[key].bottles += d.filledBottlesDelivered;
         monthlyMap[key].deliveries += 1;

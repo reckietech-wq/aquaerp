@@ -1,11 +1,11 @@
 const prisma = require('../lib/prisma');
+const { istDayStart, istDayEnd } = require('../lib/dateUtils');
 
+// "Today" is the IST calendar day, not the server process's local day —
+// otherwise a delivery recorded late in the IST evening can fall on the
+// wrong side of the boundary.
 function todayRange() {
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const end = new Date();
-  end.setHours(23, 59, 59, 999);
-  return { start, end };
+  return { start: istDayStart(), end: istDayEnd() };
 }
 
 async function getMyClients(req, res) {

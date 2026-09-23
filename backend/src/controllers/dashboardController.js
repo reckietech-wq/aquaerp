@@ -1,24 +1,26 @@
 const prisma = require('../lib/prisma');
+const { istDayStart, istDayEnd, istMonthStart, currentIstYearMonth } = require('../lib/dateUtils');
 
+// All boundaries computed in IST — the business's timezone — regardless of
+// the server process's own timezone, so a delivery late in the IST evening
+// never gets bucketed into the wrong day/month.
 function getRangeStart(filter) {
-  const now = new Date();
   if (filter === 'month') {
-    return new Date(now.getFullYear(), now.getMonth(), 1);
+    const { year, month } = currentIstYearMonth();
+    return istMonthStart(year, month);
   }
   if (filter === 'year') {
-    return new Date(now.getFullYear(), 0, 1);
+    const { year } = currentIstYearMonth();
+    return istMonthStart(year, 1);
   }
-  // default: today
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  return start;
+  // default: today (IST)
+  return istDayStart();
 }
 
 async function getStats(req, res) {
   const { filter, clientId } = req.query;
   const rangeStart = getRangeStart(filter);
-  const rangeEnd = new Date();
-  rangeEnd.setHours(23, 59, 59, 999);
+  const rangeEnd = istDayEnd();
 
   // Only COMPLETED deliveries count as "delivered" — a PENDING delivery
   // hasn't actually moved any bottles yet, and this must stay consistent
@@ -77,8 +79,7 @@ async function getStats(req, res) {
 async function getRecentDeliveries(req, res) {
   const { filter, clientId } = req.query;
   const rangeStart = getRangeStart(filter);
-  const rangeEnd = new Date();
-  rangeEnd.setHours(23, 59, 59, 999);
+  const rangeEnd = istDayEnd();
 
   const deliveries = await prisma.delivery.findMany({
     take: 20,

@@ -1,6 +1,10 @@
 ﻿require('express-async-errors');
 require('dotenv').config();
 
+// Safety net only — every business-date boundary is computed explicitly via
+// lib/dateUtils (IST), so this just keeps any stray `new Date()` call sane.
+process.env.TZ = process.env.TZ || 'Asia/Kolkata';
+
 const express = require('express');
 const cors    = require('cors');
 const path    = require('path');

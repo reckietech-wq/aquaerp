@@ -1,4 +1,5 @@
 const prisma = require('../lib/prisma');
+const { istDayStart, istDayEnd } = require('../lib/dateUtils');
 
 // Returns true if the requesting user is allowed to act on the given client's
 // invoices — admins always pass; drivers must be that client's assigned driver.
@@ -371,13 +372,7 @@ async function getClientStatement(req, res) {
     },
   });
 
-  const { start, end } = (() => {
-    const s = new Date();
-    s.setHours(0, 0, 0, 0);
-    const e = new Date();
-    e.setHours(23, 59, 59, 999);
-    return { start: s, end: e };
-  })();
+  const { start, end } = { start: istDayStart(), end: istDayEnd() };
 
   const unpaidDeliveries = unpaidInvoices.map((inv) => ({
     deliveryId: inv.deliveryId,
@@ -518,12 +513,8 @@ async function getAllInvoices(req, res) {
 
   if (from || to) {
     where.createdAt = {};
-    if (from) where.createdAt.gte = new Date(from);
-    if (to) {
-      const toDate = new Date(to);
-      toDate.setHours(23, 59, 59, 999);
-      where.createdAt.lte = toDate;
-    }
+    if (from) where.createdAt.gte = istDayStart(from);
+    if (to) where.createdAt.lte = istDayEnd(to);
   }
 
   if (search) {
@@ -578,12 +569,8 @@ async function getInvoicesByClient(req, res) {
   const invoiceWhere = {};
   if (from || to) {
     invoiceWhere.createdAt = {};
-    if (from) invoiceWhere.createdAt.gte = new Date(from);
-    if (to) {
-      const toDate = new Date(to);
-      toDate.setHours(23, 59, 59, 999);
-      invoiceWhere.createdAt.lte = toDate;
-    }
+    if (from) invoiceWhere.createdAt.gte = istDayStart(from);
+    if (to) invoiceWhere.createdAt.lte = istDayEnd(to);
   }
 
   const clientWhere = {
