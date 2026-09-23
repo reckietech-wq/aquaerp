@@ -79,6 +79,8 @@ async function getMyClients(req, res) {
       ratePerBottle: c.ratePerBottle,
       outstandingBalance: c.outstandingBalance,
       bottlesOut: c.bottlesOut,
+      totalBottlesDelivered: c.totalBottlesDelivered,
+      totalBottlesCollected: c.totalBottlesCollected,
       totalDeliveries: c._count.deliveries,
       lastDeliveryDate: lastMap[c.id]?.date ?? null,
       lastDeliveryBottles: lastMap[c.id]?.bottles ?? null,

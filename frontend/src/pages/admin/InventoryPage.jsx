@@ -574,7 +574,7 @@ export default function InventoryPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50/60">
-                {['Client', 'Route', 'Driver', 'Bottles Out'].map((h) => (
+                {['Client', 'Route', 'Driver', 'Total Delivered', 'Total Collected', 'Remaining'].map((h) => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
                     {h}
                   </th>
@@ -585,14 +585,14 @@ export default function InventoryPage() {
               {bottlesOutLoading ? (
                 Array.from({ length: 4 }).map((_, i) => (
                   <tr key={i} className="animate-pulse">
-                    {Array.from({ length: 4 }).map((_, j) => (
+                    {Array.from({ length: 6 }).map((_, j) => (
                       <td key={j} className="px-4 py-3"><div className="h-4 bg-slate-200 rounded" style={{ width: `${50 + (j * 13) % 40}%` }} /></td>
                     ))}
                   </tr>
                 ))
               ) : bottlesOut.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="text-center py-16 text-slate-400">
+                  <td colSpan={6} className="text-center py-16 text-slate-400">
                     <Users size={32} className="mx-auto mb-2 opacity-30" />
                     <p className="text-sm">No clients currently holding bottles</p>
                   </td>
@@ -604,6 +604,8 @@ export default function InventoryPage() {
                     <span className="inline-flex items-center gap-1"><MapPin size={10} /> {row.route}</span>
                   </td>
                   <td className="px-4 py-3 text-slate-500">{row.driverName}</td>
+                  <td className="px-4 py-3 text-slate-700 font-medium tabular-nums">{row.totalBottlesDelivered}</td>
+                  <td className="px-4 py-3 text-slate-700 font-medium tabular-nums">{row.totalBottlesCollected}</td>
                   <td className="px-4 py-3">
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-bold text-sm">
                       <Package size={12} /> {row.bottlesOut}
@@ -630,16 +632,22 @@ export default function InventoryPage() {
               <p className="text-sm">No clients currently holding bottles</p>
             </div>
           ) : bottlesOut.map((row) => (
-            <div key={row.clientId} className="p-4 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="font-medium text-slate-800 truncate">{row.clientName}</p>
-                <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
-                  <MapPin size={9} /> {row.route} · {row.driverName}
-                </p>
+            <div key={row.clientId} className="p-4 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-medium text-slate-800 truncate">{row.clientName}</p>
+                  <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
+                    <MapPin size={9} /> {row.route} · {row.driverName}
+                  </p>
+                </div>
+                <span className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-bold text-sm">
+                  <Package size={12} /> {row.bottlesOut}
+                </span>
               </div>
-              <span className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-bold text-sm">
-                <Package size={12} /> {row.bottlesOut}
-              </span>
+              <p className="text-xs text-slate-400">
+                Delivered <span className="font-semibold text-slate-600">{row.totalBottlesDelivered}</span>
+                {' · '}Collected <span className="font-semibold text-slate-600">{row.totalBottlesCollected}</span>
+              </p>
             </div>
           ))}
         </div>

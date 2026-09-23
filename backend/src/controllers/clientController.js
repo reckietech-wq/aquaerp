@@ -309,6 +309,14 @@ async function addHistoricalRecord(req, res) {
   const balanceBefore = Number(client.outstandingBalance);
   const balanceAfter = balanceBefore + remaining;
 
+  // Historical deliveries move real bottles too (just before the system went
+  // live), so they feed the client's running lifetime totals the same way a
+  // live delivery does. bottlesDelivered is filled-only (no empties field on
+  // the historical form), so collected is unchanged and bottlesOut rises.
+  const newTotalDelivered = client.totalBottlesDelivered + bottles;
+  const newTotalCollected = client.totalBottlesCollected;
+  const newBottlesOut = Math.max(0, newTotalDelivered - newTotalCollected);
+
   const invoiceNumber = `HIST-${Date.now()}-${clientId}`;
 
   // Delivery must exist before the invoice can reference its id, so it's
@@ -348,7 +356,12 @@ async function addHistoricalRecord(req, res) {
     }),
     prisma.client.update({
       where: { id: clientId },
-      data: { outstandingBalance: balanceAfter },
+      data: {
+        outstandingBalance: balanceAfter,
+        totalBottlesDelivered: newTotalDelivered,
+        totalBottlesCollected: newTotalCollected,
+        bottlesOut: newBottlesOut,
+      },
     }),
   ];
 
@@ -400,7 +413,7 @@ async function deleteHistoricalRecord(req, res) {
 
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
-    include: { client: true },
+    include: { client: true, delivery: true },
   });
   if (!invoice || invoice.clientId !== clientId || !invoice.isHistorical) {
     return res.status(404).json({ error: 'Historical record not found' });
@@ -408,13 +421,25 @@ async function deleteHistoricalRecord(req, res) {
 
   const remainingUnpaid = Number(invoice.totalAmount) - Number(invoice.amountPaid);
 
+  // Reverse this historical entry's contribution to the running bottle
+  // totals too, same as deleteDelivery — otherwise deleting it leaves a
+  // bottlesOut residue.
+  const newTotalDelivered = Math.max(0, invoice.client.totalBottlesDelivered - invoice.delivery.filledBottlesDelivered);
+  const newTotalCollected = Math.max(0, invoice.client.totalBottlesCollected - invoice.delivery.emptyBottlesCollected);
+  const newBottlesOut = Math.max(0, newTotalDelivered - newTotalCollected);
+
   await prisma.$transaction([
     prisma.paymentHistory.deleteMany({ where: { clientId, invoiceId: invoice.id } }),
     prisma.invoice.delete({ where: { id: invoiceId } }),
     prisma.delivery.delete({ where: { id: invoice.deliveryId } }),
     prisma.client.update({
       where: { id: clientId },
-      data: { outstandingBalance: { decrement: remainingUnpaid } },
+      data: {
+        outstandingBalance: { decrement: remainingUnpaid },
+        totalBottlesDelivered: newTotalDelivered,
+        totalBottlesCollected: newTotalCollected,
+        bottlesOut: newBottlesOut,
+      },
     }),
   ]);
 
@@ -450,6 +475,92 @@ async function getClientSummary(req, res) {
   });
 }
 
+// ─── POST /api/clients/:clientId/recalculate-bottles  (ADMIN only) ───────────
+// Safety-net repair: recomputes totalBottlesDelivered/totalBottlesCollected
+// from scratch by summing every COMPLETED delivery (live + historical) for
+// this client, then derives bottlesOut from those two totals — for clients
+// whose running totals drifted before this tracking existed, or from a bug.
+async function recalculateBottles(req, res) {
+  const { clientId } = req.params;
+  const client = await prisma.client.findUnique({ where: { id: clientId } });
+  if (!client) return res.status(404).json({ error: 'Client not found' });
+
+  const agg = await prisma.delivery.aggregate({
+    where: { clientId, status: 'COMPLETED' },
+    _sum: { filledBottlesDelivered: true, emptyBottlesCollected: true },
+  });
+
+  const totalBottlesDelivered = agg._sum.filledBottlesDelivered ?? 0;
+  const totalBottlesCollected = agg._sum.emptyBottlesCollected ?? 0;
+  const bottlesOut = Math.max(0, totalBottlesDelivered - totalBottlesCollected);
+
+  const old = {
+    totalBottlesDelivered: client.totalBottlesDelivered,
+    totalBottlesCollected: client.totalBottlesCollected,
+    bottlesOut: client.bottlesOut,
+  };
+
+  await prisma.client.update({
+    where: { id: clientId },
+    data: { totalBottlesDelivered, totalBottlesCollected, bottlesOut },
+  });
+
+  res.json({
+    clientId,
+    old,
+    new: { totalBottlesDelivered, totalBottlesCollected, bottlesOut },
+  });
+}
+
+// ─── POST /api/clients/recalculate-all-bottles  (ADMIN only) ─────────────────
+// Runs recalculateBottles for every client in one call — fixes all existing
+// clients' bottle totals at once (e.g. right after this feature shipped).
+async function recalculateAllBottles(req, res) {
+  const clients = await prisma.client.findMany({
+    select: { id: true, name: true, totalBottlesDelivered: true, totalBottlesCollected: true, bottlesOut: true },
+  });
+
+  const results = [];
+  for (const client of clients) {
+    const agg = await prisma.delivery.aggregate({
+      where: { clientId: client.id, status: 'COMPLETED' },
+      _sum: { filledBottlesDelivered: true, emptyBottlesCollected: true },
+    });
+    const totalBottlesDelivered = agg._sum.filledBottlesDelivered ?? 0;
+    const totalBottlesCollected = agg._sum.emptyBottlesCollected ?? 0;
+    const bottlesOut = Math.max(0, totalBottlesDelivered - totalBottlesCollected);
+
+    const changed = totalBottlesDelivered !== client.totalBottlesDelivered
+      || totalBottlesCollected !== client.totalBottlesCollected
+      || bottlesOut !== client.bottlesOut;
+
+    if (changed) {
+      await prisma.client.update({
+        where: { id: client.id },
+        data: { totalBottlesDelivered, totalBottlesCollected, bottlesOut },
+      });
+    }
+
+    results.push({
+      clientId: client.id,
+      clientName: client.name,
+      changed,
+      old: {
+        totalBottlesDelivered: client.totalBottlesDelivered,
+        totalBottlesCollected: client.totalBottlesCollected,
+        bottlesOut: client.bottlesOut,
+      },
+      new: { totalBottlesDelivered, totalBottlesCollected, bottlesOut },
+    });
+  }
+
+  res.json({
+    totalClients: results.length,
+    changedCount: results.filter((r) => r.changed).length,
+    results,
+  });
+}
+
 module.exports = {
   createClient,
   listClients,
@@ -463,4 +574,6 @@ module.exports = {
   deleteHistoricalRecord,
   getClientSummary,
   recalculateBalance,
+  recalculateBottles,
+  recalculateAllBottles,
 };

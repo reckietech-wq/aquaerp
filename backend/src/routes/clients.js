@@ -2,7 +2,7 @@ const { Router } = require('express');
 const {
   createClient, listClients, getClient, updateClient, deleteClient, getClientPayments, deletePayment,
   addHistoricalRecord, getClientHistoricalRecords, deleteHistoricalRecord, getClientSummary,
-  recalculateBalance,
+  recalculateBalance, recalculateBottles, recalculateAllBottles,
 } = require('../controllers/clientController');
 const { getClientStatement } = require('../controllers/invoiceController');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
@@ -18,6 +18,8 @@ router.use(requireAdmin);
 
 router.post('/', createClient);
 router.get('/', listClients);
+// Static path before /:id
+router.post('/recalculate-all-bottles', recalculateAllBottles);
 router.get('/:id', getClient);
 router.get('/:id/payments', getClientPayments);
 router.delete('/:id/payments/:paymentId', deletePayment);
@@ -26,6 +28,7 @@ router.post('/:clientId/historical-record', addHistoricalRecord);
 router.get('/:clientId/historical-record', getClientHistoricalRecords);
 router.delete('/:clientId/historical-record/:invoiceId', deleteHistoricalRecord);
 router.post('/:clientId/recalculate-balance', recalculateBalance);
+router.post('/:clientId/recalculate-bottles', recalculateBottles);
 router.put('/:id', updateClient);
 router.delete('/:id', deleteClient);
 

@@ -142,6 +142,8 @@ async function getBottlesOut(req, res) {
       address: true,
       route: true,
       bottlesOut: true,
+      totalBottlesDelivered: true,
+      totalBottlesCollected: true,
       assignedDriver: { select: { user: { select: { name: true } } } },
     },
     orderBy: { bottlesOut: 'desc' },
@@ -154,6 +156,8 @@ async function getBottlesOut(req, res) {
     route:      c.route,
     driverName: c.assignedDriver?.user?.name ?? '—',
     bottlesOut: c.bottlesOut,
+    totalBottlesDelivered: c.totalBottlesDelivered,
+    totalBottlesCollected: c.totalBottlesCollected,
   }));
 
   const total = rows.reduce((s, r) => s + r.bottlesOut, 0);

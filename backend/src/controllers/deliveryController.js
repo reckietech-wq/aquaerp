@@ -4,7 +4,7 @@ const { adjustInventory } = require('../services/inventoryService');
 const MAX_PLAUSIBLE_BOTTLES = 1000;
 
 async function createDelivery(req, res) {
-  const { clientId, filledBottlesDelivered, emptyBottlesCollected, deliveryDate, notes, status, bottlesOutOverride } = req.body;
+  const { clientId, filledBottlesDelivered, emptyBottlesCollected, deliveryDate, notes, status } = req.body;
 
   if (!clientId || filledBottlesDelivered == null || emptyBottlesCollected == null) {
     return res.status(400).json({ error: 'clientId, filledBottlesDelivered, and emptyBottlesCollected are required' });
@@ -20,16 +20,9 @@ async function createDelivery(req, res) {
     return res.status(400).json({ error: 'Bottle count seems too high, please verify' });
   }
 
-  let override = null;
-  if (bottlesOutOverride != null) {
-    override = parseInt(bottlesOutOverride, 10);
-    if (isNaN(override) || override < 0) {
-      return res.status(400).json({ error: 'bottlesOutOverride must be a non-negative number' });
-    }
-    if (override > MAX_PLAUSIBLE_BOTTLES) {
-      return res.status(400).json({ error: 'Bottle count seems too high, please verify' });
-    }
-  }
+  // bottlesOut is always derived from the two running totals — no manual
+  // override anymore. bottlesOutOverride is silently ignored if sent (old
+  // app builds may still send it during rollout).
 
   const client = await prisma.client.findUnique({ where: { id: clientId } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
@@ -92,20 +85,30 @@ async function createDelivery(req, res) {
       });
 
       // Track how many of our filled bottles this client is currently
-      // holding (delivered but not yet returned as empties). A driver can
-      // override this with an on-site manual count instead of trusting the
-      // running calculation, e.g. after a correction.
-      const newBottlesOut = override != null
-        ? override
-        : Math.max(0, client.bottlesOut + filled - empty);
+      // holding (delivered but not yet returned as empties). bottlesOut is
+      // always derived from the two running lifetime totals — never set
+      // directly — so it can't drift from them.
+      const newTotalDelivered = client.totalBottlesDelivered + filled;
+      const newTotalCollected = client.totalBottlesCollected + empty;
+      const newBottlesOut = Math.max(0, newTotalDelivered - newTotalCollected);
 
       const updatedClient = await tx.client.update({
         where: { id: clientId },
-        data: { bottlesOut: newBottlesOut },
-        select: { bottlesOut: true },
+        data: {
+          totalBottlesDelivered: newTotalDelivered,
+          totalBottlesCollected: newTotalCollected,
+          bottlesOut: newBottlesOut,
+        },
+        select: { totalBottlesDelivered: true, totalBottlesCollected: true, bottlesOut: true },
       });
 
-      return { delivery: d, inventory: inv, bottlesOut: updatedClient.bottlesOut };
+      return {
+        delivery: d,
+        inventory: inv,
+        bottlesOut: updatedClient.bottlesOut,
+        totalBottlesDelivered: updatedClient.totalBottlesDelivered,
+        totalBottlesCollected: updatedClient.totalBottlesCollected,
+      };
     });
   } catch (err) {
     return res.status(400).json({ error: err.message || 'Failed to record delivery' });
@@ -115,6 +118,8 @@ async function createDelivery(req, res) {
     delivery: result.delivery,
     inventory: { totalFilled: result.inventory.totalFilledBottles, totalEmpty: result.inventory.totalEmptyBottles },
     bottlesOut: result.bottlesOut,
+    totalBottlesDelivered: result.totalBottlesDelivered,
+    totalBottlesCollected: result.totalBottlesCollected,
   });
 }
 
@@ -259,11 +264,29 @@ async function deleteDelivery(req, res) {
 
   const delivery = await prisma.delivery.findUnique({
     where: { id },
-    include: { invoice: true, client: { select: { name: true } } },
+    include: {
+      invoice: true,
+      client: { select: { name: true, totalBottlesDelivered: true, totalBottlesCollected: true } },
+    },
   });
   if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
 
-  const operations = [];
+  // Reverse this delivery's contribution to the client's lifetime bottle
+  // totals so deleting it never leaves a bottlesOut residue.
+  const newTotalDelivered = Math.max(0, delivery.client.totalBottlesDelivered - delivery.filledBottlesDelivered);
+  const newTotalCollected = Math.max(0, delivery.client.totalBottlesCollected - delivery.emptyBottlesCollected);
+  const newBottlesOut = Math.max(0, newTotalDelivered - newTotalCollected);
+
+  const operations = [
+    prisma.client.update({
+      where: { id: delivery.clientId },
+      data: {
+        totalBottlesDelivered: newTotalDelivered,
+        totalBottlesCollected: newTotalCollected,
+        bottlesOut: newBottlesOut,
+      },
+    }),
+  ];
   if (delivery.invoice) {
     const remainingUnpaid = Number(delivery.invoice.totalAmount) - Number(delivery.invoice.amountPaid);
     operations.push(

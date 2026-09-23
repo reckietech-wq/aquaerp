@@ -353,7 +353,10 @@ async function getClientStatement(req, res) {
 
   const client = await prisma.client.findUnique({
     where: { id: clientId },
-    select: { id: true, name: true, address: true, route: true, ratePerBottle: true, outstandingBalance: true, bottlesOut: true },
+    select: {
+      id: true, name: true, address: true, route: true, ratePerBottle: true, outstandingBalance: true,
+      bottlesOut: true, totalBottlesDelivered: true, totalBottlesCollected: true,
+    },
   });
   if (!client) return res.status(404).json({ error: 'Client not found' });
   if (!(await canAccessClient(req, clientId))) {
