@@ -43,12 +43,13 @@ function buildWaUrl(mobile, message) {
   return `https://wa.me/${num}?text=${encodeURIComponent(message)}`;
 }
 
-async function downloadClientPDF(clientId, month, year, filename) {
-  const res = await api.get(`/api/billing/${clientId}/pdf?month=${month}&year=${year}`, { responseType: 'blob' });
+async function downloadClientPDF(clientId, params, filename) {
+  const qs = new URLSearchParams(params).toString();
+  const res = await api.get(`/api/billing/${clientId}/pdf?${qs}`, { responseType: 'blob' });
   const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename || `invoice-${clientId}-${year}-${month}.pdf`;
+  a.download = filename || `invoice-${clientId}.pdf`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -57,6 +58,35 @@ async function downloadClientPDF(clientId, month, year, filename) {
 
 function invoiceNumberFor(clientId, month, year) {
   return `BILL-${year}-${String(month).padStart(2, '0')}-${clientId.slice(-6).toUpperCase()}`;
+}
+
+// ─── period helpers ─────────────────────────────────────────────────────────
+// A "bill" row/object carries either {month,year} (calendar-month billing) or
+// {from,to} (custom IST date-range billing) — every place that used to read
+// month/year directly goes through these so both modes share one code path.
+
+function isRangeBill(bill) {
+  return !!bill?.from;
+}
+
+function periodParams(bill) {
+  return isRangeBill(bill)
+    ? { from: bill.from, to: bill.to }
+    : { month: bill.month, year: bill.year };
+}
+
+function periodLabel(bill) {
+  return isRangeBill(bill)
+    ? `${fmtDate(bill.from)} – ${fmtDate(bill.to)}`
+    : `${MONTH_NAMES[bill.month]} ${bill.year}`;
+}
+
+function periodInvoiceNumber(clientId, bill) {
+  if (isRangeBill(bill)) {
+    const compact = (d) => d.replace(/-/g, '');
+    return `BILL-${compact(bill.from)}-${compact(bill.to)}-${clientId.slice(-6).toUpperCase()}`;
+  }
+  return invoiceNumberFor(clientId, bill.month, bill.year);
 }
 
 // ─── StatusBadge ──────────────────────────────────────────────────────────────
@@ -108,8 +138,10 @@ function StatCard({ label, value, icon: Icon, color }) {
 // ─── ClientBillingModal — full invoice detail + share actions ─────────────────
 
 function ClientBillingModal({ bill, onClose, onChanged }) {
-  const { clientId, month, year } = bill;
-  const invoiceNumber = invoiceNumberFor(clientId, month, year);
+  const { clientId } = bill;
+  const isRange = isRangeBill(bill);
+  const invoiceNumber = periodInvoiceNumber(clientId, bill);
+  const periodQuery = new URLSearchParams(periodParams(bill)).toString();
 
   const [waLoading, setWaLoading]   = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
@@ -118,8 +150,8 @@ function ClientBillingModal({ bill, onClose, onChanged }) {
   async function handleWhatsApp() {
     setWaLoading(true);
     try {
-      const { data } = await api.get(`/api/billing/${clientId}/whatsapp-link?month=${month}&year=${year}`);
-      downloadClientPDF(clientId, month, year, `${invoiceNumber}.pdf`).catch(() => {});
+      const { data } = await api.get(`/api/billing/${clientId}/whatsapp-link?${periodQuery}`);
+      downloadClientPDF(clientId, periodParams(bill), `${invoiceNumber}.pdf`).catch(() => {});
       window.open(data.url, '_blank', 'noopener,noreferrer');
     } catch {
       toast.error('Failed to open WhatsApp');
@@ -131,7 +163,7 @@ function ClientBillingModal({ bill, onClose, onChanged }) {
   async function handleDownloadPDF() {
     setPdfLoading(true);
     try {
-      await downloadClientPDF(clientId, month, year, `${invoiceNumber}.pdf`);
+      await downloadClientPDF(clientId, periodParams(bill), `${invoiceNumber}.pdf`);
       toast.success('PDF downloaded');
     } catch {
       toast.error('Download failed');
@@ -180,7 +212,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0}
   <div style="text-align:right">
     <div class="inv-label">Invoice</div>
     <div class="inv-num">${invoiceNumber}</div>
-    <div class="inv-date">${MONTH_NAMES[month]} ${year}</div>
+    <div class="inv-date">${periodLabel(bill)}</div>
   </div>
 </div>
 <div class="parties">
@@ -208,10 +240,11 @@ td{padding:8px 12px;border:1px solid #e2e8f0}
   }
 
   async function handleMarkPaid() {
-    if (!window.confirm(`Mark ${bill.clientName}'s ${MONTH_NAMES[month]} ${year} bill fully paid? This records a payment covering the remaining ₹${(bill.totalBilled - bill.totalPaid).toFixed(2)}.`)) return;
+    if (isRange) return; // guarded by hiding the button — mark-paid isn't supported for custom ranges
+    if (!window.confirm(`Mark ${bill.clientName}'s ${periodLabel(bill)} bill fully paid? This records a payment covering the remaining ₹${(bill.totalBilled - bill.totalPaid).toFixed(2)}.`)) return;
     setMarking(true);
     try {
-      await api.put(`/api/billing/${clientId}/mark-paid`, { month, year, paymentMethod: 'CASH' });
+      await api.put(`/api/billing/${clientId}/mark-paid`, { month: bill.month, year: bill.year, paymentMethod: 'CASH' });
       toast.success('Marked as paid');
       onChanged();
       onClose();
@@ -251,7 +284,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0}
               <div className="text-right shrink-0">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Invoice</p>
                 <p className="font-bold text-slate-800 font-mono text-sm mt-0.5">{invoiceNumber}</p>
-                <p className="text-slate-400 text-xs mt-0.5">{MONTH_NAMES[month]} {year}</p>
+                <p className="text-slate-400 text-xs mt-0.5">{periodLabel(bill)}</p>
               </div>
             </div>
 
@@ -366,17 +399,21 @@ td{padding:8px 12px;border:1px solid #e2e8f0}
 
             <div className="border-t border-slate-200" />
 
-            {bill.status !== 'PAID' ? (
+            {bill.status === 'PAID' ? (
+              <div className="mt-auto flex items-center gap-2 px-3 py-2.5 rounded-lg bg-green-50 border border-green-200">
+                <CheckCircle2 size={14} className="text-green-500 shrink-0" />
+                <span className="text-xs text-green-700 font-semibold">Fully paid</span>
+              </div>
+            ) : isRange ? (
+              <p className="mt-auto text-xs text-slate-400 text-center px-2">
+                Marking paid is only available from the monthly view.
+              </p>
+            ) : (
               <button onClick={handleMarkPaid} disabled={marking}
                 className="mt-auto w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border-2 border-green-500 text-green-600 font-semibold text-sm hover:bg-green-50 disabled:opacity-60 transition-colors">
                 {marking ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
                 Mark Month Paid
               </button>
-            ) : (
-              <div className="mt-auto flex items-center gap-2 px-3 py-2.5 rounded-lg bg-green-50 border border-green-200">
-                <CheckCircle2 size={14} className="text-green-500 shrink-0" />
-                <span className="text-xs text-green-700 font-semibold">Fully paid</span>
-              </div>
             )}
           </div>
         </div>
@@ -408,7 +445,7 @@ function BatchSendModal({ bills, month, year, onClose }) {
     const link = links[clientId];
     if (!link) return;
     setStatus((s) => ({ ...s, [clientId]: 'sending' }));
-    downloadClientPDF(clientId, month, year, `invoice-${link.clientName}.pdf`).catch(() => {});
+    downloadClientPDF(clientId, { month, year }, `invoice-${link.clientName}.pdf`).catch(() => {});
     window.open(link.url, '_blank', 'noopener,noreferrer');
     setTimeout(() => setStatus((s) => ({ ...s, [clientId]: 'done' })), 800);
   }
@@ -521,7 +558,7 @@ function BillCard({ bill, selected, onSelect, onView, onMarkPaid, onDownload }) 
         <button onClick={() => onView(bill)} className="flex-1 flex items-center justify-center gap-1 py-2 rounded-lg bg-green-50 hover:bg-green-100 text-green-600 text-xs font-medium transition-colors">
           <MessageCircle size={13} /> Share
         </button>
-        {bill.status !== 'PAID' && (
+        {bill.status !== 'PAID' && !isRangeBill(bill) && (
           <button onClick={() => onMarkPaid(bill)} className="flex-1 flex items-center justify-center gap-1 py-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600 text-xs font-medium transition-colors">
             <CheckCircle2 size={13} /> Paid
           </button>
@@ -535,9 +572,24 @@ function BillCard({ bill, selected, onSelect, onView, onMarkPaid, onDownload }) 
 
 const MONTH_OPTIONS = getMonthOptions();
 
+// yyyy-mm-dd for a Date, for the range picker's default values.
+function toISODate(d) {
+  return d.toISOString().slice(0, 10);
+}
+
 export default function MonthlyBillingPage() {
+  const [mode, setMode] = useState('month'); // 'month' | 'range'
+
   const [selectedIdx, setSelectedIdx] = useState(0); // 0 = current month, live
   const { month, year } = MONTH_OPTIONS[selectedIdx];
+
+  // Custom range: rangeFrom/rangeTo are the picker's live values; activeRange
+  // is what was last actually "Generate"d — bills are only fetched for the
+  // latter, so editing the dates doesn't refetch until the user confirms.
+  const today = useMemo(() => new Date(), []);
+  const [rangeFrom, setRangeFrom] = useState(() => toISODate(new Date(today.getFullYear(), today.getMonth(), 1)));
+  const [rangeTo, setRangeTo]     = useState(() => toISODate(today));
+  const [activeRange, setActiveRange] = useState(null);
 
   const [bills, setBills]     = useState([]);
   const [stats, setStats]     = useState(null);
@@ -567,9 +619,12 @@ export default function MonthlyBillingPage() {
   }, []);
 
   const fetchBills = useCallback(async () => {
+    if (mode === 'range' && !activeRange) return; // nothing generated yet
     setLoading(true);
     try {
-      const params = new URLSearchParams({ month, year });
+      const params = new URLSearchParams(
+        mode === 'range' ? { from: activeRange.from, to: activeRange.to } : { month, year }
+      );
       if (statusFilter)    params.set('status',   statusFilter);
       if (driverFilter)    params.set('driverId', driverFilter);
       if (debouncedSearch) params.set('search',   debouncedSearch);
@@ -581,17 +636,27 @@ export default function MonthlyBillingPage() {
     } finally {
       setLoading(false);
     }
-  }, [month, year, statusFilter, driverFilter, debouncedSearch]);
+  }, [mode, month, year, activeRange, statusFilter, driverFilter, debouncedSearch]);
 
   useEffect(() => { fetchBills(); }, [fetchBills]);
-  useEffect(() => { setSelectedIds(new Set()); }, [month, year]);
+  useEffect(() => { setSelectedIds(new Set()); }, [mode, month, year, activeRange]);
+
+  function handleGenerateRange() {
+    if (!rangeFrom || !rangeTo) { toast.error('Pick both a From and To date'); return; }
+    if (rangeFrom > rangeTo) { toast.error('"From" must not be after "To"'); return; }
+    setActiveRange({ from: rangeFrom, to: rangeTo });
+  }
 
   // ── Actions ──────────────────────────────────────────────────────────────────
 
   async function handleMarkPaid(bill) {
-    if (!confirm(`Mark ${bill.clientName}'s ${MONTH_NAMES[month]} ${year} bill fully paid?`)) return;
+    if (isRangeBill(bill)) {
+      toast.error('Marking paid is only available from the monthly view');
+      return;
+    }
+    if (!confirm(`Mark ${bill.clientName}'s ${periodLabel(bill)} bill fully paid?`)) return;
     try {
-      await api.put(`/api/billing/${bill.clientId}/mark-paid`, { month, year, paymentMethod: 'CASH' });
+      await api.put(`/api/billing/${bill.clientId}/mark-paid`, { month: bill.month, year: bill.year, paymentMethod: 'CASH' });
       toast.success('Marked as paid');
       fetchBills();
     } catch (err) { toast.error(err.response?.data?.error || 'Failed'); }
@@ -600,7 +665,7 @@ export default function MonthlyBillingPage() {
   async function handleDownloadSingle(bill) {
     const tid = toast.loading('Generating PDF…');
     try {
-      await downloadClientPDF(bill.clientId, month, year, `invoice-${bill.clientName}-${MONTH_NAMES[month]}-${year}.pdf`);
+      await downloadClientPDF(bill.clientId, periodParams(bill), `invoice-${bill.clientName}-${periodLabel(bill)}.pdf`);
       toast.success('PDF downloaded', { id: tid });
     } catch { toast.error('Download failed', { id: tid }); }
   }
@@ -612,8 +677,9 @@ export default function MonthlyBillingPage() {
     let done = 0;
     for (const id of ids) {
       const bill = bills.find((b) => b.clientId === id);
+      if (!bill) continue;
       try {
-        await downloadClientPDF(id, month, year, `invoice-${bill?.clientName}-${MONTH_NAMES[month]}-${year}.pdf`);
+        await downloadClientPDF(id, periodParams(bill), `invoice-${bill.clientName}-${periodLabel(bill)}.pdf`);
         done++;
         toast.loading(`${done}/${ids.length} downloaded…`, { id: tid });
         await new Promise((r) => setTimeout(r, 400));
@@ -647,7 +713,14 @@ export default function MonthlyBillingPage() {
     return { total: bills.length, paid, partial, unpaid };
   }, [bills]);
 
-  const isCurrentMonth = selectedIdx === 0;
+  const isCurrentMonth = mode === 'month' && selectedIdx === 0;
+
+  const currentPeriodLabel = mode === 'range'
+    ? (activeRange ? `${fmtDate(activeRange.from)} – ${fmtDate(activeRange.to)}` : null)
+    : `${MONTH_NAMES[month]} ${year}`;
+  const emptyStateMessage = mode === 'range' && !activeRange
+    ? 'Pick a date range above and click Generate'
+    : `No invoiced deliveries for ${currentPeriodLabel}`;
 
   return (
     <div className="space-y-5 max-w-7xl mx-auto">
@@ -655,28 +728,55 @@ export default function MonthlyBillingPage() {
       {/* ── Page header ──────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-start gap-4">
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-slate-800">Monthly Billing</h1>
+          <h1 className="text-2xl font-bold text-slate-800">Billing</h1>
           <p className="text-slate-500 text-sm mt-0.5">
             Live from Invoices — always matches what's shown in Invoices &amp; Statements
             {isCurrentMonth && <span className="ml-1.5 inline-flex items-center gap-1 text-blue-600 font-medium">· current month, live</span>}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative">
-            <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-            <select value={selectedIdx} onChange={(e) => setSelectedIdx(Number(e.target.value))}
-              className="pl-8 pr-8 py-2.5 text-sm font-medium border border-slate-200 rounded-xl bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-900 cursor-pointer">
-              {MONTH_OPTIONS.map((opt, i) => (
-                <option key={i} value={i}>{MONTH_NAMES[opt.month]} {opt.year}{i === 0 ? ' (current)' : ''}</option>
-              ))}
-            </select>
-            <ChevronDown size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-          </div>
-          <button onClick={fetchBills} disabled={loading}
-            className="p-2.5 border border-slate-200 rounded-xl text-slate-400 hover:bg-slate-50 disabled:opacity-60 transition-colors">
-            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
-          </button>
+      </div>
+
+      {/* ── Mode toggle + period picker ─────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex rounded-xl border border-slate-200 overflow-hidden text-sm font-medium shrink-0">
+          {[{ v: 'month', l: 'Month' }, { v: 'range', l: 'Custom Date Range' }].map(({ v, l }) => (
+            <button key={v} onClick={() => setMode(v)}
+              className={`px-3.5 py-2.5 transition-colors ${mode === v ? 'bg-blue-900 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+              {l}
+            </button>
+          ))}
         </div>
+
+        {mode === 'month' ? (
+          <>
+            <div className="relative">
+              <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <select value={selectedIdx} onChange={(e) => setSelectedIdx(Number(e.target.value))}
+                className="pl-8 pr-8 py-2.5 text-sm font-medium border border-slate-200 rounded-xl bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-900 cursor-pointer">
+                {MONTH_OPTIONS.map((opt, i) => (
+                  <option key={i} value={i}>{MONTH_NAMES[opt.month]} {opt.year}{i === 0 ? ' (current)' : ''}</option>
+                ))}
+              </select>
+              <ChevronDown size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            </div>
+            <button onClick={fetchBills} disabled={loading}
+              className="p-2.5 border border-slate-200 rounded-xl text-slate-400 hover:bg-slate-50 disabled:opacity-60 transition-colors">
+              <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+            </button>
+          </>
+        ) : (
+          <>
+            <input type="date" value={rangeFrom} max={rangeTo} onChange={(e) => setRangeFrom(e.target.value)}
+              className="px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-900" />
+            <span className="text-slate-400 text-sm">to</span>
+            <input type="date" value={rangeTo} min={rangeFrom} onChange={(e) => setRangeTo(e.target.value)}
+              className="px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-900" />
+            <button onClick={handleGenerateRange} disabled={loading}
+              className="px-4 py-2.5 rounded-xl text-sm font-semibold bg-blue-900 hover:bg-blue-800 text-white disabled:opacity-60 transition-colors">
+              {loading ? 'Loading…' : 'Generate'}
+            </button>
+          </>
+        )}
       </div>
 
       {/* ── Stat cards ───────────────────────────────────────────────────── */}
@@ -748,10 +848,12 @@ export default function MonthlyBillingPage() {
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-60 text-sm font-semibold transition-colors">
             {bulkDling ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} Download PDFs
           </button>
-          <button onClick={openBatchSend}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-500 hover:bg-green-400 text-sm font-semibold transition-colors">
-            <MessageCircle size={13} /> Send WhatsApp ({selectedIds.size})
-          </button>
+          {mode === 'month' && (
+            <button onClick={openBatchSend}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-500 hover:bg-green-400 text-sm font-semibold transition-colors">
+              <MessageCircle size={13} /> Send WhatsApp ({selectedIds.size})
+            </button>
+          )}
           <button onClick={() => setSelectedIds(new Set())} className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"><X size={14} /></button>
         </div>
       )}
@@ -783,7 +885,7 @@ export default function MonthlyBillingPage() {
                 <tr>
                   <td colSpan={9} className="text-center py-20 text-slate-400">
                     <Receipt size={36} className="mx-auto mb-3 opacity-30" />
-                    <p className="text-sm">No invoiced deliveries for {MONTH_NAMES[month]} {year}</p>
+                    <p className="text-sm">{emptyStateMessage}</p>
                   </td>
                 </tr>
               ) : bills.map((bill) => (
@@ -817,7 +919,7 @@ export default function MonthlyBillingPage() {
                         className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-blue-700 transition-colors"><Download size={14} /></button>
                       <button onClick={() => setViewBill(bill)} title="Send WhatsApp"
                         className="p-1.5 rounded-lg text-slate-400 hover:bg-green-50 hover:text-green-600 transition-colors"><MessageCircle size={14} /></button>
-                      {bill.status !== 'PAID' && (
+                      {bill.status !== 'PAID' && !isRangeBill(bill) && (
                         <button onClick={() => handleMarkPaid(bill)} title="Mark month paid"
                           className="p-1.5 rounded-lg text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 transition-colors"><CheckCircle2 size={14} /></button>
                       )}
@@ -846,7 +948,7 @@ export default function MonthlyBillingPage() {
         ) : bills.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-3">
             <Receipt size={36} className="opacity-30" />
-            <p className="text-sm">No invoiced deliveries for {MONTH_NAMES[month]} {year}</p>
+            <p className="text-sm">{emptyStateMessage}</p>
           </div>
         ) : bills.map((bill) => (
           <BillCard key={bill.clientId} bill={bill} selected={selectedIds.has(bill.clientId)}

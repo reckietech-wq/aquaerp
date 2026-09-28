@@ -2,7 +2,7 @@ const PDFDocument = require('pdfkit');
 const QRCode      = require('qrcode');
 const fs          = require('fs');
 const path        = require('path');
-const { getClientMonthBilling } = require('./billingService');
+const { getClientMonthBilling, getClientRangeBilling } = require('./billingService');
 const { formatIstDate } = require('../lib/dateUtils');
 const prisma = require('../lib/prisma');
 
@@ -260,18 +260,14 @@ function drawFooter(doc, bizName) {
   doc.page.margins.bottom = savedBottomMargin;
 }
 
-// ─── generateClientMonthPDF ───────────────────────────────────────────────────
-// Builds a monthly invoice/statement PDF straight from live Invoice +
-// Delivery data (via billingService) — no MonthlyBill row involved, so the
-// PDF's status and totals can never drift from what Invoices/Statement show.
+// ─── shared PDF renderer ────────────────────────────────────────────────────
+// Both the monthly and custom-range bills produce the exact same `billing`
+// shape (see billingService), so a single renderer builds the actual PDF —
+// only the invoiceNo and output filename differ per caller.
 
-async function generateClientMonthPDF(clientId, month, year) {
+async function renderBillingPDF(billing, { invoiceNo, outPath }) {
   ensureDir();
 
-  const billing = await getClientMonthBilling(clientId, month, year);
-  if (!billing) throw new Error(`Client ${clientId} not found`);
-
-  const invoiceNo = `BILL-${year}-${String(month).padStart(2, '0')}-${clientId.slice(-6).toUpperCase()}`;
   const upiId     = process.env.BUSINESS_UPI_ID || process.env.UPI_ID || 'yourbusiness@upi';
   const payeeName = process.env.BUSINESS_UPI_NAME || process.env.BUSINESS_NAME || 'Gajanan Aqua';
   const bizName   = process.env.BUSINESS_NAME || 'Gajanan Aqua';
@@ -295,7 +291,6 @@ async function generateClientMonthPDF(clientId, month, year) {
   const signaturePath = resolveAssetPath(settings?.signaturePath);
   const stampPath = resolveAssetPath(settings?.stampPath);
 
-  const outPath = path.join(UPLOADS_DIR, `billing-${clientId}-${year}-${String(month).padStart(2, '0')}.pdf`);
   const doc    = new PDFDocument({ size: PAGE_SIZE, margin: MARGIN });
   const stream = fs.createWriteStream(outPath);
 
@@ -402,4 +397,32 @@ async function generateClientMonthPDF(clientId, month, year) {
   return outPath;
 }
 
-module.exports = { generateClientMonthPDF };
+// ─── generateClientMonthPDF ───────────────────────────────────────────────────
+// Builds a monthly invoice/statement PDF straight from live Invoice +
+// Delivery data (via billingService) — no MonthlyBill row involved, so the
+// PDF's status and totals can never drift from what Invoices/Statement show.
+async function generateClientMonthPDF(clientId, month, year) {
+  const billing = await getClientMonthBilling(clientId, month, year);
+  if (!billing) throw new Error(`Client ${clientId} not found`);
+
+  const invoiceNo = `BILL-${year}-${String(month).padStart(2, '0')}-${clientId.slice(-6).toUpperCase()}`;
+  const outPath = path.join(UPLOADS_DIR, `billing-${clientId}-${year}-${String(month).padStart(2, '0')}.pdf`);
+
+  return renderBillingPDF(billing, { invoiceNo, outPath });
+}
+
+// ─── generateClientRangePDF ───────────────────────────────────────────────────
+// Same as generateClientMonthPDF but for an arbitrary custom IST date range
+// (yyyy-mm-dd from/to) instead of a calendar month.
+async function generateClientRangePDF(clientId, from, to) {
+  const billing = await getClientRangeBilling(clientId, from, to);
+  if (!billing) throw new Error(`Client ${clientId} not found`);
+
+  const compact = (d) => d.replace(/-/g, '');
+  const invoiceNo = `BILL-${compact(from)}-${compact(to)}-${clientId.slice(-6).toUpperCase()}`;
+  const outPath = path.join(UPLOADS_DIR, `billing-${clientId}-${compact(from)}-${compact(to)}.pdf`);
+
+  return renderBillingPDF(billing, { invoiceNo, outPath });
+}
+
+module.exports = { generateClientMonthPDF, generateClientRangePDF };

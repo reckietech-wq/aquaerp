@@ -3,8 +3,9 @@ const path   = require('path');
 const prisma = require('../lib/prisma');
 const {
   monthRange, currentMonthYear, getClientMonthBilling, listMonthBilling,
+  getClientRangeBilling, listRangeBilling,
 } = require('../services/billingService');
-const { generateClientMonthPDF } = require('../services/pdfService');
+const { generateClientMonthPDF, generateClientRangePDF } = require('../services/pdfService');
 const { buildWhatsAppMessage, buildWhatsAppURL } = require('../services/whatsappService');
 
 function resolveMonthYear(query) {
@@ -16,24 +17,41 @@ function resolveMonthYear(query) {
   return { month: parseInt(month, 10), year: parseInt(year, 10) };
 }
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// A request is in "custom range" mode whenever it carries valid from/to
+// dates — every billing endpoint below branches on this the same way, so a
+// caller can use either ?month=&year= or ?from=&to= interchangeably.
+function isRangeQuery(query) {
+  return !!(query.from && query.to && DATE_RE.test(query.from) && DATE_RE.test(query.to));
+}
+
 // ─── GET /api/billing?month=&year=  (ADMIN only) ──────────────────────────────
 // Defaults to the current calendar month. Every figure is computed live from
 // Invoice + Delivery records (via billingService) — no MonthlyBill table
 // involved, so paid/unpaid/partial here always matches Invoices/Statement.
 async function getBilling(req, res) {
-  const { month, year } = resolveMonthYear(req.query);
-  if (month < 1 || month > 12) return res.status(400).json({ error: 'month must be 1–12' });
-
   const { driverId, search, status } = req.query;
-  const rows = await listMonthBilling({ month, year, driverId, search, status });
+
+  let rows, periodFields;
+  if (isRangeQuery(req.query)) {
+    const { from, to } = req.query;
+    if (from > to) return res.status(400).json({ error: '"from" must not be after "to"' });
+    rows = await listRangeBilling({ from, to, driverId, search, status });
+    periodFields = { from, to };
+  } else {
+    const { month, year } = resolveMonthYear(req.query);
+    if (month < 1 || month > 12) return res.status(400).json({ error: 'month must be 1–12' });
+    rows = await listMonthBilling({ month, year, driverId, search, status });
+    periodFields = { month, year };
+  }
 
   const totalBilled      = rows.reduce((s, r) => s + r.totalBilled, 0);
   const totalPaid        = rows.reduce((s, r) => s + r.totalPaid, 0);
   const totalOutstanding = rows.reduce((s, r) => s + r.outstanding, 0);
 
   res.json({
-    month,
-    year,
+    ...periodFields,
     clients: rows,
     stats: {
       totalClients:   rows.length,
@@ -53,20 +71,30 @@ async function getBilling(req, res) {
 // client-side.
 async function getClientBilling(req, res) {
   const { clientId } = req.params;
-  const { month, year } = resolveMonthYear(req.query);
 
-  const billing = await getClientMonthBilling(clientId, month, year);
+  let billing;
+  if (isRangeQuery(req.query)) {
+    billing = await getClientRangeBilling(clientId, req.query.from, req.query.to);
+  } else {
+    const { month, year } = resolveMonthYear(req.query);
+    billing = await getClientMonthBilling(clientId, month, year);
+  }
   if (!billing) return res.status(404).json({ error: 'Client not found' });
 
   res.json(billing);
 }
 
-// ─── GET /api/billing/:clientId/pdf?month=&year=  (ADMIN only) ────────────────
+// ─── GET /api/billing/:clientId/pdf?month=&year=  OR  ?from=&to=  (ADMIN only) ─
 async function getBillingPDF(req, res) {
   const { clientId } = req.params;
-  const { month, year } = resolveMonthYear(req.query);
 
-  const filePath = await generateClientMonthPDF(clientId, month, year);
+  let filePath;
+  if (isRangeQuery(req.query)) {
+    filePath = await generateClientRangePDF(clientId, req.query.from, req.query.to);
+  } else {
+    const { month, year } = resolveMonthYear(req.query);
+    filePath = await generateClientMonthPDF(clientId, month, year);
+  }
   const fileName = path.basename(filePath);
 
   res.setHeader('Content-Type', 'application/pdf');
@@ -74,12 +102,20 @@ async function getBillingPDF(req, res) {
   fs.createReadStream(filePath).pipe(res);
 }
 
-// ─── GET /api/billing/:clientId/whatsapp-link?month=&year=  (ADMIN only) ──────
+// ─── GET /api/billing/:clientId/whatsapp-link?month=&year=  OR  ?from=&to=  (ADMIN only) ──
 async function getBillingWhatsAppLink(req, res) {
   const { clientId } = req.params;
-  const { month, year } = resolveMonthYear(req.query);
 
-  const billing = await getClientMonthBilling(clientId, month, year);
+  let billing, periodFields;
+  if (isRangeQuery(req.query)) {
+    const { from, to } = req.query;
+    billing = await getClientRangeBilling(clientId, from, to);
+    periodFields = { from, to };
+  } else {
+    const { month, year } = resolveMonthYear(req.query);
+    billing = await getClientMonthBilling(clientId, month, year);
+    periodFields = { month, year };
+  }
   if (!billing) return res.status(404).json({ error: 'Client not found' });
 
   const message = buildWhatsAppMessage(billing);
@@ -91,8 +127,7 @@ async function getBillingWhatsAppLink(req, res) {
     clientName: billing.clientName,
     mobile:     billing.mobile,
     clientId,
-    month,
-    year,
+    ...periodFields,
   });
 }
 
