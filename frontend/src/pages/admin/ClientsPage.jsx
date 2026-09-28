@@ -86,6 +86,14 @@ function MobileCard({ client, onEdit, onViewStatement, onViewHistory, onDelete }
           ₹{Number(client.outstandingBalance ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </span>
       </div>
+      {Number(client.creditBalance ?? 0) > 0 && (
+        <div className="flex justify-between items-center text-xs">
+          <span className="text-slate-400">Credit available</span>
+          <span className="font-semibold text-blue-600">
+            ₹{Number(client.creditBalance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -315,6 +323,11 @@ export default function ClientsPage() {
                       <span className={`font-semibold ${Number(c.outstandingBalance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
                         ₹{Number(c.outstandingBalance ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
+                      {Number(c.creditBalance ?? 0) > 0 && (
+                        <p className="text-xs text-blue-600 font-medium mt-0.5">
+                          Credit: ₹{Number(c.creditBalance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge isActive={c.isActive} />

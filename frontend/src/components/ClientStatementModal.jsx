@@ -241,6 +241,12 @@ export default function ClientStatementModal({ clientId, onClose }) {
                     <span className="text-slate-800 font-bold">GRAND TOTAL DUE</span>
                     <span className="text-blue-900 font-bold text-xl">₹{fmt(statement.summary.grandTotalDue)}</span>
                   </div>
+                  {Number(statement.summary.creditBalance) > 0 && (
+                    <div className="flex justify-between text-sm pt-1">
+                      <span className="text-blue-600 font-medium">Credit available</span>
+                      <span className="text-blue-600 font-bold">₹{fmt(statement.summary.creditBalance)}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 

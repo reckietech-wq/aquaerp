@@ -78,6 +78,7 @@ async function getMyClients(req, res) {
       tempoNumber: c.tempoNumber,
       ratePerBottle: c.ratePerBottle,
       outstandingBalance: c.outstandingBalance,
+      creditBalance: c.creditBalance,
       bottlesOut: c.bottlesOut,
       totalBottlesDelivered: c.totalBottlesDelivered,
       totalBottlesCollected: c.totalBottlesCollected,

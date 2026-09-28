@@ -403,9 +403,16 @@ export default function EditClientModal({ client, drivers, onClose, onSaved }) {
                 <IndianRupee size={15} className="text-slate-400" />
                 Payment History
               </h3>
-              <span className={`text-xs font-semibold ${Number(detail?.outstandingBalance ?? client.outstandingBalance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                Outstanding: ₹{Number(detail?.outstandingBalance ?? client.outstandingBalance ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
+              <div className="text-right">
+                <span className={`block text-xs font-semibold ${Number(detail?.outstandingBalance ?? client.outstandingBalance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                  Outstanding: ₹{Number(detail?.outstandingBalance ?? client.outstandingBalance ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                {Number(detail?.creditBalance ?? client.creditBalance ?? 0) > 0 && (
+                  <span className="block text-xs font-semibold text-blue-600 mt-0.5">
+                    Credit available: ₹{Number(detail?.creditBalance ?? client.creditBalance ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                )}
+              </div>
             </div>
 
             {loadingPayments ? (

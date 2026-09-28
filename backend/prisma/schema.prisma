@@ -75,6 +75,7 @@ model Client {
   tempoNumber         String
   ratePerBottle       Decimal  @default(50) @db.Decimal(10, 2)
   outstandingBalance  Decimal  @default(0) @db.Decimal(10, 2)
+  creditBalance       Decimal  @default(0) @db.Decimal(10, 2)
   totalBottlesDelivered Int    @default(0)
   totalBottlesCollected Int    @default(0)
   bottlesOut          Int      @default(0)

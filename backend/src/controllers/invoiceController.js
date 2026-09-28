@@ -21,7 +21,12 @@ async function generateInvoice(req, res) {
   const delivery = await prisma.delivery.findUnique({
     where: { id: deliveryId },
     include: {
-      client: { select: { id: true, name: true, mobile: true, address: true, ratePerBottle: true } },
+      client: {
+        select: {
+          id: true, name: true, mobile: true, address: true, ratePerBottle: true,
+          outstandingBalance: true, creditBalance: true,
+        },
+      },
       driver: { include: { user: { select: { id: true } } } },
     },
   });
@@ -68,10 +73,20 @@ async function generateInvoice(req, res) {
     ? `upi://pay?pa=${upiId}&pn=${encodeURIComponent(payeeName)}&am=${totalAmount}&cu=INR&tn=${invoiceNumber}`
     : '';
 
+  // After this invoice's total is added to outstandingBalance, any existing
+  // credit balance (from a prior overpayment/advance) is auto-applied against
+  // it immediately, down to 0 — so a client who's paid ahead never sees a new
+  // delivery show up as newly "owed" while they still have credit sitting idle.
+  const outstandingAfterInvoice = parseFloat(delivery.client.outstandingBalance) + totalAmount;
+  const creditAvailable = parseFloat(delivery.client.creditBalance);
+  const creditApplied = Math.min(creditAvailable, outstandingAfterInvoice);
+  const finalOutstanding = parseFloat((outstandingAfterInvoice - creditApplied).toFixed(2));
+  const finalCredit = parseFloat((creditAvailable - creditApplied).toFixed(2));
+
   // Create the invoice and add its total to the client's running balance in
   // one transaction, so outstandingBalance is always accurate the moment a
   // delivery is billed — payments only ever subtract from it afterward.
-  const [invoice] = await prisma.$transaction([
+  const operations = [
     prisma.invoice.create({
       data: {
         clientId,
@@ -89,9 +104,27 @@ async function generateInvoice(req, res) {
     }),
     prisma.client.update({
       where: { id: clientId },
-      data: { outstandingBalance: { increment: totalAmount } },
+      data: { outstandingBalance: finalOutstanding, creditBalance: finalCredit },
     }),
-  ]);
+  ];
+
+  if (creditApplied > 0) {
+    operations.push(
+      prisma.paymentHistory.create({
+        data: {
+          clientId,
+          amountPaid: creditApplied,
+          paymentMethod: 'CREDIT_APPLIED',
+          balanceBefore: outstandingAfterInvoice,
+          balanceAfter: finalOutstanding,
+          recordedBy: req.user.loginId ?? req.user.id,
+          note: `Auto-applied from credit balance against invoice ${invoiceNumber}`,
+        },
+      }),
+    );
+  }
+
+  const [invoice] = await prisma.$transaction(operations);
 
   res.status(201).json(invoice);
 }
@@ -189,7 +222,19 @@ async function markInvoicePaid(req, res) {
   // portion — it must never add totalAmount again.
   const remainingUnpaid = totalAmount - alreadyPaid;
   const balanceBefore = parseFloat(invoice.client.outstandingBalance);
-  const balanceAfter = remainingUnpaid > 0 ? balanceBefore - remainingUnpaid : balanceBefore;
+
+  // Optional caller-supplied amountPaid lets this cover more than exactly
+  // what's due (e.g. an admin recording a round-number cash payment) — any
+  // amount beyond remainingUnpaid becomes credit instead of ever pushing
+  // outstandingBalance negative.
+  const bodyAmount = req.body?.amountPaid != null ? parseFloat(req.body.amountPaid) : null;
+  const paidNow = bodyAmount != null && !isNaN(bodyAmount) && bodyAmount > 0 ? bodyAmount : remainingUnpaid;
+  const appliedToInvoice = Math.max(0, Math.min(paidNow, Math.max(remainingUnpaid, 0)));
+  const excess = Math.max(0, paidNow - Math.max(remainingUnpaid, 0));
+
+  const balanceAfter = appliedToInvoice > 0 ? balanceBefore - appliedToInvoice : balanceBefore;
+  const creditBefore = parseFloat(invoice.client.creditBalance);
+  const creditAfter = creditBefore + excess;
 
   const operations = [
     prisma.invoice.update({
@@ -206,21 +251,22 @@ async function markInvoicePaid(req, res) {
     }),
   ];
 
-  if (remainingUnpaid > 0) {
+  if (appliedToInvoice > 0 || excess > 0) {
     operations.push(
       prisma.client.update({
         where: { id: invoice.clientId },
-        data: { outstandingBalance: balanceAfter },
+        data: { outstandingBalance: balanceAfter, creditBalance: creditAfter },
       }),
       prisma.paymentHistory.create({
         data: {
           clientId: invoice.clientId,
           invoiceId: invoice.id,
-          amountPaid: remainingUnpaid,
+          amountPaid: appliedToInvoice > 0 ? appliedToInvoice : excess,
           paymentMethod,
           balanceBefore,
           balanceAfter,
           recordedBy: req.user.loginId,
+          note: excess > 0 ? `Rs.${excess.toFixed(2)} overpayment added to credit balance` : null,
         },
       }),
     );
@@ -308,11 +354,15 @@ async function recordPayment(req, res) {
     actualApplied += applied;
   }
 
-  if (actualApplied === 0) {
-    // Every invoice for this client (including the anchor) is already fully
-    // paid — there's nothing to apply this payment to. Do NOT touch the
-    // balance and do NOT create a PaymentHistory row for a payment that
-    // settled nothing.
+  // Anything left over after every unpaid invoice is fully covered (amount >
+  // total owed, or there were no unpaid invoices to begin with) becomes
+  // credit rather than being dropped or pushing outstandingBalance negative.
+  const excess = amount - actualApplied;
+  const creditBefore = parseFloat(invoice.client.creditBalance);
+  const creditAfter = creditBefore + excess;
+
+  if (actualApplied === 0 && excess === 0) {
+    // Nothing was applied and there's no excess to credit either (amount was 0).
     return res.json({ message: 'No outstanding invoices to apply payment to' });
   }
 
@@ -321,17 +371,22 @@ async function recordPayment(req, res) {
   const [updatedClient, payment, ...updatedInvoices] = await prisma.$transaction([
     prisma.client.update({
       where: { id: invoice.clientId },
-      data: { outstandingBalance: newBalance },
+      data: { outstandingBalance: newBalance, creditBalance: creditAfter },
     }),
     prisma.paymentHistory.create({
       data: {
         clientId: invoice.clientId,
-        invoiceId: invoice.id,
-        amountPaid: actualApplied,
+        invoiceId: actualApplied > 0 ? invoice.id : null,
+        amountPaid: amount,
         paymentMethod,
         balanceBefore,
         balanceAfter: newBalance,
         recordedBy: req.user.loginId,
+        note: excess > 0
+          ? (actualApplied > 0
+              ? `Rs.${excess.toFixed(2)} overpayment added to credit balance`
+              : `No unpaid invoices — full amount credited as advance payment`)
+          : null,
       },
     }),
     ...invoiceUpdates,
@@ -342,7 +397,7 @@ async function recordPayment(req, res) {
   res.json({
     invoice: updatedInvoice,
     invoicesUpdated: updatedInvoices,
-    client: { outstandingBalance: updatedClient.outstandingBalance },
+    client: { outstandingBalance: updatedClient.outstandingBalance, creditBalance: updatedClient.creditBalance },
     payment,
     message: 'Payment recorded successfully',
   });
@@ -356,7 +411,7 @@ async function getClientStatement(req, res) {
     where: { id: clientId },
     select: {
       id: true, name: true, address: true, route: true, ratePerBottle: true, outstandingBalance: true,
-      bottlesOut: true, totalBottlesDelivered: true, totalBottlesCollected: true,
+      creditBalance: true, bottlesOut: true, totalBottlesDelivered: true, totalBottlesCollected: true,
     },
   });
   if (!client) return res.status(404).json({ error: 'Client not found' });
@@ -405,6 +460,7 @@ async function getClientStatement(req, res) {
       todaysTotal,
       totalUnpaid,
       grandTotalDue,
+      creditBalance: Number(client.creditBalance),
       statementQrData,
     },
   });

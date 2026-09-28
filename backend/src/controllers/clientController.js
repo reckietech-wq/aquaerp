@@ -258,10 +258,21 @@ async function recalculateBalance(req, res) {
     _sum: { totalAmount: true, amountPaid: true },
   });
 
+  // Credit auto-applied against invoices (generateInvoice) reduces
+  // outstandingBalance directly rather than through invoice.amountPaid, so
+  // it has to be subtracted again here or recalculation would silently
+  // "undo" every past auto-apply.
+  const creditAppliedAgg = await prisma.paymentHistory.aggregate({
+    where: { clientId, paymentMethod: 'CREDIT_APPLIED' },
+    _sum: { amountPaid: true },
+  });
+
   const oldBalance = Number(client.outstandingBalance);
-  const newBalance = parseFloat(
-    (Number(agg._sum.totalAmount ?? 0) - Number(agg._sum.amountPaid ?? 0)).toFixed(2)
-  );
+  const rawBalance =
+    Number(agg._sum.totalAmount ?? 0) -
+    Number(agg._sum.amountPaid ?? 0) -
+    Number(creditAppliedAgg._sum.amountPaid ?? 0);
+  const newBalance = parseFloat(Math.max(0, rawBalance).toFixed(2));
 
   await prisma.client.update({ where: { id: clientId }, data: { outstandingBalance: newBalance } });
 
