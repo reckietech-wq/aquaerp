@@ -14,6 +14,7 @@ import {
   PackageCheck,
   Menu,
   X,
+  Settings,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -26,6 +27,7 @@ const navItems = [
   { to: '/admin/billing',   label: 'Billing',   icon: Receipt   },
   { to: '/admin/inventory', label: 'Inventory', icon: Package   },
   { to: '/admin/reports',   label: 'Reports',   icon: BarChart3 },
+  { to: '/admin/settings',  label: 'Settings',  icon: Settings },
 ];
 
 function SidebarLink({ to, label, icon: Icon, collapsed, onClick }) {

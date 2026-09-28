@@ -164,6 +164,17 @@ model PaymentHistory {
   createdAt     DateTime @default(now())
 }
 
+// Single-row settings table (id fixed at 1) for business-wide config that
+// isn't tied to any one client/driver — currently just the invoice PDF's
+// signature/stamp images.
+model BusinessSettings {
+  id            Int      @id @default(1)
+  signaturePath String?  @db.Text
+  stampPath     String?  @db.Text
+  updatedAt     DateTime @updatedAt
+  updatedBy     String?
+}
+
 model BottleInventory {
   id                 Int      @id
   totalFilledBottles Int      @default(0)

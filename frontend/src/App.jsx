@@ -17,6 +17,7 @@ import InvoicesPage from './pages/admin/InvoicesPage';
 import MonthlyBillingPage from './pages/admin/MonthlyBillingPage';
 import InventoryPage from './pages/admin/InventoryPage';
 import ReportsPage from './pages/admin/ReportsPage';
+import SettingsPage from './pages/admin/SettingsPage';
 import DriverDashboardPage from './pages/driver/DriverDashboardPage';
 import DriverSummaryPage from './pages/driver/DriverSummaryPage';
 
@@ -59,6 +60,7 @@ export default function App() {
             <Route path="billing"    element={<MonthlyBillingPage />} />
             <Route path="inventory" element={<InventoryPage />} />
             <Route path="reports"   element={<ReportsPage />} />
+            <Route path="settings"  element={<SettingsPage />} />
           </Route>
 
           {/* Driver */}

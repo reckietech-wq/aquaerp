@@ -44,6 +44,7 @@ const invoiceRoutes      = require('./routes/invoices');
 const billingRoutes      = require('./routes/billing');
 const reportRoutes       = require('./routes/reports');
 const inventoryRoutes    = require('./routes/inventory');
+const settingsRoutes     = require('./routes/settings');
 
 app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth',      authRoutes);
@@ -56,9 +57,12 @@ app.use('/api/invoices',      invoiceRoutes);
 app.use('/api/billing',       billingRoutes);
 app.use('/api/reports',       reportRoutes);
 app.use('/api/inventory',     inventoryRoutes);
+app.use('/api/settings',      settingsRoutes);
 
 // Serve generated PDFs as static files
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// Serve business assets (logo, uploaded signature/stamp) as static files
+app.use('/assets', express.static(path.join(__dirname, '../assets')));
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

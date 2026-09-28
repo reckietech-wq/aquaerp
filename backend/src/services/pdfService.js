@@ -4,6 +4,7 @@ const fs          = require('fs');
 const path        = require('path');
 const { getClientMonthBilling } = require('./billingService');
 const { formatIstDate } = require('../lib/dateUtils');
+const prisma = require('../lib/prisma');
 
 // ─── layout grid ────────────────────────────────────────────────────────────
 // Every x/y below is derived from these few constants, so the whole layout
@@ -35,6 +36,9 @@ const FONT = { regular: 'Helvetica', bold: 'Helvetica-Bold' };
 const UPLOADS_DIR      = path.join(__dirname, '../../uploads/invoices');
 const FALLBACK_QR_PATH = path.join(__dirname, '../../assets/payment-qr.png');
 const LOGO_PATH        = path.join(__dirname, '../../assets/logo.png');
+const ASSETS_DIR       = path.join(__dirname, '../../assets');
+
+const SIGNATURE_BLOCK_H = 90;
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -76,6 +80,14 @@ function fmtDate(d) {
 
 function ensureDir() {
   if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
+// BusinessSettings stores a public URL path like "/assets/signature.png" —
+// resolve it to the real file on disk, under backend/assets/.
+function resolveAssetPath(publicPath) {
+  if (!publicPath) return null;
+  const filePath = path.join(ASSETS_DIR, path.basename(publicPath));
+  return fs.existsSync(filePath) ? filePath : null;
 }
 
 // Right-aligned "label ... value" pair inside a fixed box, used for the
@@ -192,6 +204,43 @@ function drawRow(doc, y, { date, desc, qty, rate, amount }, zebra) {
      .lineWidth(0.5).strokeColor(COLOR.border).stroke();
 }
 
+// ─── signature & stamp block ────────────────────────────────────────────────
+// Bottom-right, above the footer's "Thank you" line. Renders only whichever
+// of the two images is actually uploaded — with neither, the block is
+// skipped entirely (caller checks before reserving space for it).
+function drawSignatureBlock(doc, y, { signaturePath, stampPath }) {
+  const blockW = 200;
+  const blockX = CONTENT_R - blockW;
+
+  if (stampPath) {
+    try {
+      // Drawn first (so it sits "behind" the signature in z-order) and
+      // faded slightly so it reads as a stamp impression, not a sticker.
+      doc.save();
+      doc.opacity(0.8);
+      doc.image(stampPath, blockX, y, { fit: [75, 75] });
+      doc.restore();
+    } catch (err) {
+      console.error('[pdfService] stamp embed failed:', err.message);
+    }
+  }
+
+  if (signaturePath) {
+    try {
+      doc.image(signaturePath, blockX + 75, y + 8, { fit: [110, 40], align: 'center' });
+    } catch (err) {
+      console.error('[pdfService] signature embed failed:', err.message);
+    }
+    const lineY = y + 58;
+    doc.moveTo(blockX + 75, lineY).lineTo(blockX + blockW, lineY)
+       .lineWidth(0.5).strokeColor(COLOR.border).stroke();
+    doc.fillColor(COLOR.gray).font(FONT.regular).fontSize(8)
+       .text('Authorized Signatory', blockX + 75, lineY + 5, { width: blockW - 75, align: 'center' });
+  }
+
+  return y + SIGNATURE_BLOCK_H;
+}
+
 // ─── footer ─────────────────────────────────────────────────────────────────
 function drawFooter(doc, bizName) {
   // The footer sits inside the page's bottom margin band, so PDFKit's
@@ -241,6 +290,10 @@ async function generateClientMonthPDF(clientId, month, year) {
 
   const isSingle = billing.deliveries.length === 1;
   const docLabel = isSingle ? 'TAX INVOICE' : 'STATEMENT';
+
+  const settings = await prisma.businessSettings.findUnique({ where: { id: 1 } });
+  const signaturePath = resolveAssetPath(settings?.signaturePath);
+  const stampPath = resolveAssetPath(settings?.stampPath);
 
   const outPath = path.join(UPLOADS_DIR, `billing-${clientId}-${year}-${String(month).padStart(2, '0')}.pdf`);
   const doc    = new PDFDocument({ size: PAGE_SIZE, margin: MARGIN });
@@ -333,6 +386,14 @@ async function generateClientMonthPDF(clientId, month, year) {
     ty2 += 22;
     doc.fillColor(STATUS_COLOR[billing.status]).font(FONT.bold).fontSize(9)
        .text(STATUS_LABEL[billing.status], totX + 14, ty2, { width: totW - 28, align: 'right' });
+
+    y += blockH + 16;
+
+    // ── signature & stamp ────────────────────────────────────────────────
+    if (signaturePath || stampPath) {
+      y = ensureSpace(doc, y, SIGNATURE_BLOCK_H, startNewPage);
+      drawSignatureBlock(doc, y, { signaturePath, stampPath });
+    }
 
     drawFooter(doc, bizName);
     doc.end();
