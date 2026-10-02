@@ -50,11 +50,14 @@ async function generateInvoice(req, res) {
   const existing = await prisma.invoice.findUnique({
     where: { deliveryId },
     include: {
-      client: { select: { id: true, name: true, mobile: true, address: true } },
+      client: { select: { id: true, name: true, mobile: true, address: true, outstandingBalance: true, creditBalance: true } },
       delivery: { select: { id: true, deliveryDate: true, filledBottlesDelivered: true } },
     },
   });
-  if (existing) return res.json({ ...existing, alreadyExisted: true });
+  if (existing) {
+    const amountDue = parseFloat((parseFloat(existing.totalAmount) - parseFloat(existing.amountPaid)).toFixed(2));
+    return res.json({ ...existing, amountDue, alreadyExisted: true });
+  }
 
   const clientId = delivery.clientId;
 
@@ -83,6 +86,17 @@ async function generateInvoice(req, res) {
   const finalOutstanding = parseFloat((outstandingAfterInvoice - creditApplied).toFixed(2));
   const finalCredit = parseFloat((creditAvailable - creditApplied).toFixed(2));
 
+  // The portion of creditApplied that actually belongs to THIS invoice (never
+  // more than its own totalAmount — any excess credit beyond that is paying
+  // down older outstanding balance, not this invoice). This keeps the
+  // invoice's own amountPaid/isPaid ledger truthful instead of leaving it
+  // permanently "unpaid" while outstandingBalance already reflects the credit
+  // — the single source of the double-apply bug: the app was independently
+  // re-subtracting the same credit the server had already applied here.
+  const amountPaidFromCredit = Math.min(creditApplied, totalAmount);
+  const invoiceIsFullyPaid = amountPaidFromCredit >= totalAmount;
+  const amountDue = parseFloat((totalAmount - amountPaidFromCredit).toFixed(2));
+
   // Create the invoice and add its total to the client's running balance in
   // one transaction, so outstandingBalance is always accurate the moment a
   // delivery is billed — payments only ever subtract from it afterward.
@@ -96,9 +110,14 @@ async function generateInvoice(req, res) {
         amountPerBottle: rate,
         totalAmount,
         paymentQrData,
+        ...(amountPaidFromCredit > 0 && {
+          amountPaid: amountPaidFromCredit,
+          paymentMethod: 'CREDIT_APPLIED',
+          ...(invoiceIsFullyPaid && { isPaid: true, paidAt: new Date() }),
+        }),
       },
       include: {
-        client: { select: { id: true, name: true, mobile: true, address: true } },
+        client: { select: { id: true, name: true, mobile: true, address: true, outstandingBalance: true, creditBalance: true } },
         delivery: { select: { id: true, deliveryDate: true, filledBottlesDelivered: true } },
       },
     }),
@@ -126,7 +145,20 @@ async function generateInvoice(req, res) {
 
   const [invoice] = await prisma.$transaction(operations);
 
-  res.status(201).json(invoice);
+  // invoice.client was nested-included from the invoice.create() call, which
+  // runs BEFORE the client.update() in this same transaction array — so it
+  // reflects pre-update balances. Overwrite with the values we just computed
+  // (the actual post-update truth) rather than the stale nested read.
+  //
+  // Authoritative numbers the app needs so it never has to compute credit
+  // itself — amountDue is the real cash to collect for THIS invoice, already
+  // net of any credit auto-applied above.
+  res.status(201).json({
+    ...invoice,
+    client: { ...invoice.client, outstandingBalance: finalOutstanding, creditBalance: finalCredit },
+    creditApplied: amountPaidFromCredit,
+    amountDue,
+  });
 }
 
 // ─── GET /api/invoices/:invoiceId  (any authenticated user) ──────────────────
@@ -135,7 +167,7 @@ async function getInvoiceById(req, res) {
     where: { id: req.params.invoiceId },
     include: {
       client: {
-        select: { id: true, name: true, mobile: true, address: true, outstandingBalance: true, ratePerBottle: true },
+        select: { id: true, name: true, mobile: true, address: true, outstandingBalance: true, creditBalance: true, ratePerBottle: true },
       },
       delivery: {
         select: {
