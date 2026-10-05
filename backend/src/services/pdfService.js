@@ -38,7 +38,7 @@ const FALLBACK_QR_PATH = path.join(__dirname, '../../assets/payment-qr.png');
 const LOGO_PATH        = path.join(__dirname, '../../assets/logo.png');
 const ASSETS_DIR       = path.join(__dirname, '../../assets');
 
-const SIGNATURE_BLOCK_H = 90;
+const SIGNATURE_BLOCK_H = 66;
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -189,7 +189,7 @@ function ensureSpace(doc, y, needed, onNewPage) {
   return y;
 }
 
-const FOOTER_RESERVE = 40;
+const FOOTER_RESERVE = 24;
 
 function drawRow(doc, y, { date, desc, qty, rate, amount }, zebra) {
   if (zebra) doc.rect(CONTENT_X, y, CONTENT_W, ROW_H).fill('#f8fafc');
@@ -205,12 +205,14 @@ function drawRow(doc, y, { date, desc, qty, rate, amount }, zebra) {
 }
 
 // ─── signature & stamp block ────────────────────────────────────────────────
-// Bottom-right, above the footer's "Thank you" line. Renders only whichever
-// of the two images is actually uploaded — with neither, the block is
-// skipped entirely (caller checks before reserving space for it).
-function drawSignatureBlock(doc, y, { signaturePath, stampPath }) {
-  const blockW = 200;
-  const blockX = CONTENT_R - blockW;
+// Sits directly under the totals panel, right-aligned to the same x/width so
+// it reads as part of that block rather than a separate footer band. Renders
+// only whichever of the two images is actually uploaded — with neither, the
+// block is skipped entirely (caller checks before reserving space for it).
+function drawSignatureBlock(doc, x, w, y, { signaturePath, stampPath }) {
+  const sigW = 95;
+  const stampW = 55;
+  const sigX = x + w - sigW;
 
   if (stampPath) {
     try {
@@ -218,7 +220,7 @@ function drawSignatureBlock(doc, y, { signaturePath, stampPath }) {
       // faded slightly so it reads as a stamp impression, not a sticker.
       doc.save();
       doc.opacity(0.8);
-      doc.image(stampPath, blockX, y, { fit: [75, 75] });
+      doc.image(stampPath, sigX - stampW - 6, y, { fit: [stampW, stampW] });
       doc.restore();
     } catch (err) {
       console.error('[pdfService] stamp embed failed:', err.message);
@@ -227,22 +229,24 @@ function drawSignatureBlock(doc, y, { signaturePath, stampPath }) {
 
   if (signaturePath) {
     try {
-      doc.image(signaturePath, blockX + 75, y + 8, { fit: [110, 40], align: 'center' });
+      doc.image(signaturePath, sigX, y, { fit: [sigW, 32], align: 'center' });
     } catch (err) {
       console.error('[pdfService] signature embed failed:', err.message);
     }
-    const lineY = y + 58;
-    doc.moveTo(blockX + 75, lineY).lineTo(blockX + blockW, lineY)
+    const lineY = y + 36;
+    doc.moveTo(sigX, lineY).lineTo(x + w, lineY)
        .lineWidth(0.5).strokeColor(COLOR.border).stroke();
-    doc.fillColor(COLOR.gray).font(FONT.regular).fontSize(8)
-       .text('Authorized Signatory', blockX + 75, lineY + 5, { width: blockW - 75, align: 'center' });
+    doc.fillColor(COLOR.gray).font(FONT.regular).fontSize(7.5)
+       .text('Authorized Signatory', sigX, lineY + 4, { width: sigW, align: 'center' });
   }
 
   return y + SIGNATURE_BLOCK_H;
 }
 
 // ─── footer ─────────────────────────────────────────────────────────────────
-function drawFooter(doc, bizName) {
+// A single slim line — the signature/stamp block now carries the visual
+// weight that used to live in a taller footer band.
+function drawFooter(doc) {
   // The footer sits inside the page's bottom margin band, so PDFKit's
   // automatic pagination (which checks new text against page.margins.bottom)
   // would otherwise silently insert a blank page here — zero the bottom
@@ -250,12 +254,10 @@ function drawFooter(doc, bizName) {
   const savedBottomMargin = doc.page.margins.bottom;
   doc.page.margins.bottom = 0;
 
-  const y = PAGE_H - MARGIN - 26;
+  const y = PAGE_H - MARGIN - 14;
   doc.moveTo(CONTENT_X, y).lineTo(CONTENT_R, y).lineWidth(0.5).strokeColor(COLOR.border).stroke();
-  doc.fillColor(COLOR.gray).font(FONT.regular).fontSize(9)
-     .text('Thank you for your business!', CONTENT_X, y + 8, { width: CONTENT_W, align: 'center', lineBreak: false });
-  doc.fillColor(COLOR.grayLite).font(FONT.regular).fontSize(7)
-     .text(bizName, CONTENT_X, y + 20, { width: CONTENT_W, align: 'center', lineBreak: false });
+  doc.fillColor(COLOR.gray).font(FONT.regular).fontSize(8)
+     .text('Thank you for your business!', CONTENT_X, y + 4, { width: CONTENT_W, align: 'center', lineBreak: false });
 
   doc.page.margins.bottom = savedBottomMargin;
 }
@@ -272,7 +274,10 @@ async function renderBillingPDF(billing, { invoiceNo, outPath }) {
   const payeeName = process.env.BUSINESS_UPI_NAME || process.env.BUSINESS_NAME || 'Gajanan Aqua';
   const bizName   = process.env.BUSINESS_NAME || 'Gajanan Aqua';
   const remaining = parseFloat((billing.totalBilled - billing.totalPaid).toFixed(2));
-  const upiString = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(payeeName)}&am=${Math.max(remaining, 0).toFixed(2)}&cu=INR&tn=${invoiceNo}`;
+  // The QR must encode the TOTAL DUE shown on the document (previous
+  // outstanding + this period), not just this period's remaining amount —
+  // otherwise a customer scanning it underpays by whatever was already owed.
+  const upiString = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(payeeName)}&am=${Math.max(billing.outstanding, 0).toFixed(2)}&cu=INR&tn=${invoiceNo}`;
 
   let qrBuffer;
   try {
@@ -285,7 +290,7 @@ async function renderBillingPDF(billing, { invoiceNo, outPath }) {
   }
 
   const isSingle = billing.deliveries.length === 1;
-  const docLabel = isSingle ? 'TAX INVOICE' : 'STATEMENT';
+  const docLabel = 'TAX INVOICE';
 
   const settings = await prisma.businessSettings.findUnique({ where: { id: 1 } });
   const signaturePath = resolveAssetPath(settings?.signaturePath);
@@ -382,15 +387,16 @@ async function renderBillingPDF(billing, { invoiceNo, outPath }) {
     doc.fillColor(STATUS_COLOR[billing.status]).font(FONT.bold).fontSize(9)
        .text(STATUS_LABEL[billing.status], totX + 14, ty2, { width: totW - 28, align: 'right' });
 
-    y += blockH + 16;
+    y += blockH + 10;
 
-    // ── signature & stamp ────────────────────────────────────────────────
+    // ── signature & stamp — directly below the totals panel, right-aligned
+    // to that same panel so it reads as part of the Total Due block ────────
     if (signaturePath || stampPath) {
       y = ensureSpace(doc, y, SIGNATURE_BLOCK_H, startNewPage);
-      drawSignatureBlock(doc, y, { signaturePath, stampPath });
+      y = drawSignatureBlock(doc, totX, totW, y, { signaturePath, stampPath });
     }
 
-    drawFooter(doc, bizName);
+    drawFooter(doc);
     doc.end();
   });
 

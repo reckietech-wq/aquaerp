@@ -72,9 +72,6 @@ async function generateInvoice(req, res) {
 
   const upiId      = process.env.BUSINESS_UPI_ID || process.env.UPI_ID || '';
   const payeeName  = process.env.BUSINESS_UPI_NAME || process.env.BUSINESS_NAME || 'Gajanan Aqua';
-  const paymentQrData = upiId
-    ? `upi://pay?pa=${upiId}&pn=${encodeURIComponent(payeeName)}&am=${totalAmount}&cu=INR&tn=${invoiceNumber}`
-    : '';
 
   // After this invoice's total is added to outstandingBalance, any existing
   // credit balance (from a prior overpayment/advance) is auto-applied against
@@ -85,6 +82,14 @@ async function generateInvoice(req, res) {
   const creditApplied = Math.min(creditAvailable, outstandingAfterInvoice);
   const finalOutstanding = parseFloat((outstandingAfterInvoice - creditApplied).toFixed(2));
   const finalCredit = parseFloat((creditAvailable - creditApplied).toFixed(2));
+
+  // The QR must encode the client's GRAND TOTAL DUE (every past unpaid
+  // invoice plus this one, net of credit) — not just this invoice's own
+  // amount — otherwise a customer scanning it underpays by whatever they
+  // already owed before this delivery.
+  const paymentQrData = upiId
+    ? `upi://pay?pa=${upiId}&pn=${encodeURIComponent(payeeName)}&am=${Math.max(finalOutstanding, 0).toFixed(2)}&cu=INR&tn=${invoiceNumber}`
+    : '';
 
   // The portion of creditApplied that actually belongs to THIS invoice (never
   // more than its own totalAmount — any excess credit beyond that is paying
