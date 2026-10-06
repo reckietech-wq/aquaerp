@@ -559,7 +559,7 @@ function BatchSendModal({ bills, month, year, onClose }) {
 
 // ─── BillCard (mobile) ────────────────────────────────────────────────────────
 
-function BillCard({ bill, selected, onSelect, onView, onMarkPaid, onDownload }) {
+function BillCard({ bill, selected, onSelect, onView, onMarkPaid }) {
   return (
     <div className={`bg-white rounded-2xl border shadow-sm p-4 space-y-3 transition-colors ${selected ? 'border-blue-300 bg-blue-50/30' : 'border-slate-100'}`}>
       <div className="flex items-start gap-3">
@@ -591,9 +591,6 @@ function BillCard({ bill, selected, onSelect, onView, onMarkPaid, onDownload }) 
       <div className="flex gap-2 pt-1 border-t border-slate-100">
         <button onClick={() => onView(bill)} className="flex-1 flex items-center justify-center gap-1 py-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-500 text-xs font-medium transition-colors">
           <Eye size={13} /> View
-        </button>
-        <button onClick={() => onDownload(bill)} className="flex-1 flex items-center justify-center gap-1 py-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-500 text-xs font-medium transition-colors">
-          <Download size={13} /> PDF
         </button>
         <button onClick={() => onView(bill)} className="flex-1 flex items-center justify-center gap-1 py-2 rounded-lg bg-green-50 hover:bg-green-100 text-green-600 text-xs font-medium transition-colors">
           <MessageCircle size={13} /> Share
@@ -700,14 +697,6 @@ export default function MonthlyBillingPage() {
       toast.success('Marked as paid');
       fetchBills();
     } catch (err) { toast.error(err.response?.data?.error || 'Failed'); }
-  }
-
-  async function handleDownloadSingle(bill) {
-    const tid = toast.loading('Generating PDF…');
-    try {
-      await downloadClientPDF(bill.clientId, periodParams(bill), `invoice-${bill.clientName}-${periodLabel(bill)}.pdf`);
-      toast.success('PDF downloaded', { id: tid });
-    } catch { toast.error('Download failed', { id: tid }); }
   }
 
   async function handleBulkDownload() {
@@ -955,8 +944,6 @@ export default function MonthlyBillingPage() {
                     <div className="flex items-center justify-center gap-1">
                       <button onClick={() => setViewBill(bill)} title="View invoice detail"
                         className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"><Eye size={14} /></button>
-                      <button onClick={() => handleDownloadSingle(bill)} title="Download PDF"
-                        className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-blue-700 transition-colors"><Download size={14} /></button>
                       <button onClick={() => setViewBill(bill)} title="Send WhatsApp"
                         className="p-1.5 rounded-lg text-slate-400 hover:bg-green-50 hover:text-green-600 transition-colors"><MessageCircle size={14} /></button>
                       {bill.status !== 'PAID' && !isRangeBill(bill) && (
@@ -992,7 +979,7 @@ export default function MonthlyBillingPage() {
           </div>
         ) : bills.map((bill) => (
           <BillCard key={bill.clientId} bill={bill} selected={selectedIds.has(bill.clientId)}
-            onSelect={toggleSelect} onView={setViewBill} onMarkPaid={handleMarkPaid} onDownload={handleDownloadSingle} />
+            onSelect={toggleSelect} onView={setViewBill} onMarkPaid={handleMarkPaid} />
         ))}
       </div>
 
