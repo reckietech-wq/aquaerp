@@ -5,7 +5,7 @@ const {
   monthRange, currentMonthYear, getClientMonthBilling, listMonthBilling,
   getClientRangeBilling, listRangeBilling,
 } = require('../services/billingService');
-const { generateClientMonthPDF, generateClientRangePDF } = require('../services/pdfService');
+const { generateClientMonthPDF, generateClientRangePDF, generateClientMonthlySummaryPDF } = require('../services/pdfService');
 const { buildWhatsAppMessage, buildWhatsAppURL } = require('../services/whatsappService');
 
 function resolveMonthYear(query) {
@@ -84,12 +84,22 @@ async function getClientBilling(req, res) {
   res.json(billing);
 }
 
-// ─── GET /api/billing/:clientId/pdf?month=&year=  OR  ?from=&to=  (ADMIN only) ─
+// ─── GET /api/billing/:clientId/pdf?month=&year=  OR  ?from=&to=[&type=detailed|monthly]  (ADMIN only) ─
+// type=monthly is option 2 (one row per calendar month) and requires a
+// from/to range — the month/year form only ever produces the detailed
+// (option 1) invoice, since a monthly summary of a single month is just
+// that one month's detailed invoice.
 async function getBillingPDF(req, res) {
   const { clientId } = req.params;
+  const { type } = req.query;
 
   let filePath;
-  if (isRangeQuery(req.query)) {
+  if (type === 'monthly') {
+    if (!isRangeQuery(req.query)) {
+      return res.status(400).json({ error: 'Monthly summary requires from and to dates' });
+    }
+    filePath = await generateClientMonthlySummaryPDF(clientId, req.query.from, req.query.to);
+  } else if (isRangeQuery(req.query)) {
     filePath = await generateClientRangePDF(clientId, req.query.from, req.query.to);
   } else {
     const { month, year } = resolveMonthYear(req.query);

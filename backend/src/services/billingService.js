@@ -1,5 +1,6 @@
+const dayjs = require('dayjs');
 const prisma = require('../lib/prisma');
-const { istMonthStart, currentIstYearMonth, istDayStart, istDayEnd } = require('../lib/dateUtils');
+const { IST, istMonthStart, currentIstYearMonth, istDayStart, istDayEnd } = require('../lib/dateUtils');
 
 // Live billing aggregation, sourced directly from Invoice + Delivery records
 // — no MonthlyBill table involved. This is the single source of truth: paid/
@@ -156,6 +157,71 @@ async function listRangeBilling({ from, to, driverId, search, status }) {
   return filterByStatus(rows, status);
 }
 
+// One row per IST calendar month touched by [from, to] (inclusive) that
+// actually has deliveries — used by the monthly-summary invoice PDF. Months
+// with zero deliveries are omitted entirely rather than shown as a zero row.
+async function getClientMonthlySummary(clientId, from, to) {
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+    select: {
+      id: true, name: true, address: true, mobile: true, route: true,
+      ratePerBottle: true, outstandingBalance: true,
+      assignedDriver: {
+        select: {
+          route: true, vehicleNumber: true, vehicleType: true,
+          user: { select: { name: true } },
+        },
+      },
+    },
+  });
+  if (!client) return null;
+
+  const fromIst = dayjs.tz(from, IST);
+  const toIst   = dayjs.tz(to, IST);
+
+  let cy = fromIst.year(), cm = fromIst.month() + 1;
+  const ey = toIst.year(), em = toIst.month() + 1;
+
+  const months = [];
+  while (cy < ey || (cy === ey && cm <= em)) {
+    const { start, end } = monthRange(cm, cy);
+    const invoices = await prisma.invoice.findMany({
+      where: { clientId, delivery: { deliveryDate: { gte: start, lt: end } } },
+      include: { delivery: { select: { filledBottlesDelivered: true } } },
+    });
+    if (invoices.length > 0) {
+      months.push({
+        year: cy,
+        month: cm,
+        spanStart: start,
+        spanEnd: new Date(end.getTime() - 1),
+        bottles: invoices.reduce((s, i) => s + i.delivery.filledBottlesDelivered, 0),
+        bill: invoices.reduce((s, i) => s + Number(i.totalAmount), 0),
+      });
+    }
+    cm += 1;
+    if (cm > 12) { cm = 1; cy += 1; }
+  }
+
+  const totalBill = parseFloat(months.reduce((s, m) => s + m.bill, 0).toFixed(2));
+
+  return {
+    clientId:      client.id,
+    clientName:    client.name,
+    address:       client.address,
+    mobile:        client.mobile,
+    route:         client.route,
+    driverName:    client.assignedDriver?.user?.name ?? '—',
+    driverVehicle: client.assignedDriver?.vehicleNumber ?? null,
+    ratePerBottle: Number(client.ratePerBottle),
+    months,
+    totalBill,
+    outstanding: Number(client.outstandingBalance),
+    from,
+    to,
+  };
+}
+
 function buildClientWhere({ driverId, search, dateWhere }) {
   return {
     isActive: true,
@@ -180,4 +246,5 @@ module.exports = {
   monthRange, currentMonthYear, customRange,
   getClientMonthBilling, listMonthBilling,
   getClientRangeBilling, listRangeBilling,
+  getClientMonthlySummary,
 };

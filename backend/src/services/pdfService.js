@@ -2,7 +2,7 @@ const PDFDocument = require('pdfkit');
 const QRCode      = require('qrcode');
 const fs          = require('fs');
 const path        = require('path');
-const { getClientMonthBilling, getClientRangeBilling } = require('./billingService');
+const { getClientMonthBilling, getClientRangeBilling, getClientMonthlySummary } = require('./billingService');
 const { formatIstDate } = require('../lib/dateUtils');
 const prisma = require('../lib/prisma');
 
@@ -201,6 +201,46 @@ function drawRow(doc, y, { date, desc, qty, rate, amount }, zebra) {
   doc.text(rate, COL.rate.x, ty, { width: COL.rate.w - 8, align: 'right' });
   doc.text(amount, COL.amt.x, ty, { width: COL.amt.w - 8, align: 'right' });
   doc.moveTo(CONTENT_X, y + ROW_H).lineTo(CONTENT_R, y + ROW_H)
+     .lineWidth(0.5).strokeColor(COLOR.border).stroke();
+}
+
+// ── monthly-summary table grid — Month | Bottles Delivered | Monthly Bill ──
+const COL_MS = (() => {
+  const bottlesW = 150;
+  const billW    = 150;
+  const monthW   = CONTENT_W - bottlesW - billW;
+  let x = CONTENT_X;
+  const month   = { x, w: monthW };   x += monthW;
+  const bottles = { x, w: bottlesW }; x += bottlesW;
+  const bill    = { x, w: billW };
+  return { month, bottles, bill };
+})();
+
+const ROW_H_MS = 32; // taller than ROW_H — the month cell has a two-line label + date span
+
+function drawMonthlyTableHeader(doc, y) {
+  doc.rect(CONTENT_X, y, CONTENT_W, HEADER_H).fill(COLOR.headerBg);
+  doc.fillColor(COLOR.dark).font(FONT.bold).fontSize(9);
+  const ty = y + HEADER_H / 2 - 4.5;
+  doc.text('MONTH', COL_MS.month.x + 8, ty, { width: COL_MS.month.w - 8 });
+  doc.text('BOTTLES DELIVERED', COL_MS.bottles.x, ty, { width: COL_MS.bottles.w - 8, align: 'right' });
+  doc.text('MONTHLY BILL', COL_MS.bill.x, ty, { width: COL_MS.bill.w - 8, align: 'right' });
+  doc.moveTo(CONTENT_X, y + HEADER_H).lineTo(CONTENT_R, y + HEADER_H)
+     .lineWidth(0.5).strokeColor(COLOR.border).stroke();
+  return y + HEADER_H;
+}
+
+function drawMonthlyRow(doc, y, { label, span, bottles, bill }, zebra) {
+  if (zebra) doc.rect(CONTENT_X, y, CONTENT_W, ROW_H_MS).fill('#f8fafc');
+  doc.fillColor(COLOR.dark).font(FONT.bold).fontSize(9.5)
+     .text(label, COL_MS.month.x + 8, y + 7, { width: COL_MS.month.w - 8, height: 14, ellipsis: true });
+  doc.fillColor(COLOR.gray).font(FONT.regular).fontSize(7.5)
+     .text(span, COL_MS.month.x + 8, y + 19, { width: COL_MS.month.w - 8, height: 12, ellipsis: true });
+  const vty = y + ROW_H_MS / 2 - 4.5;
+  doc.fillColor(COLOR.dark).font(FONT.regular).fontSize(9)
+     .text(bottles, COL_MS.bottles.x, vty, { width: COL_MS.bottles.w - 8, align: 'right' })
+     .text(bill, COL_MS.bill.x, vty, { width: COL_MS.bill.w - 8, align: 'right' });
+  doc.moveTo(CONTENT_X, y + ROW_H_MS).lineTo(CONTENT_R, y + ROW_H_MS)
      .lineWidth(0.5).strokeColor(COLOR.border).stroke();
 }
 
@@ -403,6 +443,134 @@ async function renderBillingPDF(billing, { invoiceNo, outPath }) {
   return outPath;
 }
 
+// ─── monthly-summary renderer ──────────────────────────────────────────────
+// Same header/BILL TO/QR/signature as the detailed invoice (renderBillingPDF)
+// — only the middle table differs: one row per calendar month instead of one
+// row per delivery.
+async function renderMonthlySummaryPDF(summary, { invoiceNo, outPath }) {
+  ensureDir();
+
+  const upiId     = process.env.BUSINESS_UPI_ID || process.env.UPI_ID || 'yourbusiness@upi';
+  const payeeName = process.env.BUSINESS_UPI_NAME || process.env.BUSINESS_NAME || 'Gajanan Aqua';
+  const bizName   = process.env.BUSINESS_NAME || 'Gajanan Aqua';
+  // Same convention as the detailed invoice: the QR encodes the client's real
+  // total due (current running balance), not just the sum of the selected range.
+  const upiString = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(payeeName)}&am=${Math.max(summary.outstanding, 0).toFixed(2)}&cu=INR&tn=${invoiceNo}`;
+
+  let qrBuffer;
+  try {
+    qrBuffer = await QRCode.toBuffer(upiString, {
+      type: 'png', width: 220, margin: 1, color: { dark: '#000000', light: '#ffffff' },
+    });
+  } catch (err) {
+    console.error('[pdfService] QR generation failed, using fallback image:', err.message);
+    qrBuffer = fs.existsSync(FALLBACK_QR_PATH) ? fs.readFileSync(FALLBACK_QR_PATH) : null;
+  }
+
+  const settings = await prisma.businessSettings.findUnique({ where: { id: 1 } });
+  const signaturePath = resolveAssetPath(settings?.signaturePath);
+  const stampPath = resolveAssetPath(settings?.stampPath);
+
+  const doc    = new PDFDocument({ size: PAGE_SIZE, margin: MARGIN });
+  const stream = fs.createWriteStream(outPath);
+
+  await new Promise((resolve, reject) => {
+    doc.pipe(stream);
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+
+    const startNewPage = () => {
+      let y = drawHeader(doc, { invoiceNo, dateLabel: fmtDate(new Date()), docLabel: 'TAX INVOICE', bizName });
+      return drawMonthlyTableHeader(doc, y);
+    };
+
+    let y = drawHeader(doc, { invoiceNo, dateLabel: fmtDate(new Date()), docLabel: 'TAX INVOICE', bizName });
+    y = drawParties(doc, y, {
+      clientName: summary.clientName,
+      address:    summary.address,
+      route:      summary.route,
+      upiId,
+      payeeName,
+      singleAmount: null,
+    });
+    y = drawMonthlyTableHeader(doc, y);
+
+    summary.months.forEach((m, i) => {
+      y = ensureSpace(doc, y, ROW_H_MS, startNewPage);
+      drawMonthlyRow(doc, y, {
+        label: `${MONTH_NAMES[m.month]} ${m.year}`,
+        span:  `${fmtDate(m.spanStart)} - ${fmtDate(m.spanEnd)}`,
+        bottles: String(m.bottles),
+        bill: fmtRupee(m.bill),
+      }, i % 2 === 1);
+      y += ROW_H_MS;
+    });
+
+    // Total row
+    y = ensureSpace(doc, y, ROW_H_MS, startNewPage);
+    doc.rect(CONTENT_X, y, CONTENT_W, ROW_H_MS).fill(COLOR.headerBg);
+    const totalBottles = summary.months.reduce((s, m) => s + m.bottles, 0);
+    const sty = y + ROW_H_MS / 2 - 4.5;
+    doc.fillColor(COLOR.dark).font(FONT.bold).fontSize(9)
+       .text('TOTAL', COL_MS.month.x + 8, sty, { width: COL_MS.month.w - 8 })
+       .text(String(totalBottles), COL_MS.bottles.x, sty, { width: COL_MS.bottles.w - 8, align: 'right' })
+       .text(fmtRupee(summary.totalBill), COL_MS.bill.x, sty, { width: COL_MS.bill.w - 8, align: 'right' });
+    doc.moveTo(CONTENT_X, y + ROW_H_MS).lineTo(CONTENT_R, y + ROW_H_MS).lineWidth(0.5).strokeColor(COLOR.border).stroke();
+    y += ROW_H_MS + 16;
+
+    // ── totals block + QR, side by side (same layout as the detailed invoice) ──
+    const blockH = 130;
+    y = ensureSpace(doc, y, blockH, startNewPage);
+
+    const qrX = CONTENT_X;
+    const qrW = 190;
+    const totW = CONTENT_W - qrW - 20;
+    const totX = CONTENT_R - totW;
+
+    doc.rect(qrX, y, qrW, blockH).fill(COLOR.brandLite).stroke(COLOR.border);
+    doc.fillColor(COLOR.grayLite).font(FONT.bold).fontSize(8)
+       .text('SCAN TO PAY', qrX, y + 10, { width: qrW, align: 'center' });
+    if (qrBuffer) {
+      doc.image(qrBuffer, qrX + (qrW - 110) / 2, y + 22, { width: 110, height: 110 - 24 });
+    }
+    doc.fillColor(COLOR.dark).font(FONT.bold).fontSize(8)
+       .text(`UPI: ${upiId}`, qrX, y + blockH - 24, { width: qrW, align: 'center' });
+    doc.fillColor(COLOR.gray).font(FONT.regular).fontSize(7)
+       .text(payeeName, qrX, y + blockH - 13, { width: qrW, align: 'center' });
+
+    doc.rect(totX, y, totW, blockH).fill('#ffffff').stroke(COLOR.border);
+    let ty2 = y + 16;
+    totalsLine(doc, totX + 14, totW - 28, ty2, 'Total Bill (this range):', fmtRupee(summary.totalBill));
+    ty2 += 16;
+    if (summary.outstanding > 0) {
+      totalsLine(doc, totX + 14, totW - 28, ty2, 'Outstanding:', fmtRupee(summary.outstanding), { color: COLOR.red });
+      ty2 += 16;
+    }
+    doc.moveTo(totX + 14, ty2 + 4).lineTo(totX + totW - 14, ty2 + 4)
+       .lineWidth(1).strokeColor(COLOR.brand).stroke();
+    ty2 += 14;
+    totalsLine(doc, totX + 14, totW - 28, ty2, 'TOTAL DUE:', fmtRupee(Math.max(summary.outstanding, 0)), {
+      bold: true, size: 13, color: summary.outstanding > 0 ? COLOR.red : COLOR.green, labelColor: COLOR.dark,
+    });
+    ty2 += 22;
+    const status = summary.outstanding > 0 ? 'UNPAID' : 'PAID';
+    doc.fillColor(STATUS_COLOR[status]).font(FONT.bold).fontSize(9)
+       .text(STATUS_LABEL[status], totX + 14, ty2, { width: totW - 28, align: 'right' });
+
+    y += blockH + 10;
+
+    if (signaturePath || stampPath) {
+      y = ensureSpace(doc, y, SIGNATURE_BLOCK_H, startNewPage);
+      y = drawSignatureBlock(doc, totX, totW, y, { signaturePath, stampPath });
+    }
+
+    drawFooter(doc);
+    doc.end();
+  });
+
+  return outPath;
+}
+
 // ─── generateClientMonthPDF ───────────────────────────────────────────────────
 // Builds a monthly invoice/statement PDF straight from live Invoice +
 // Delivery data (via billingService) — no MonthlyBill row involved, so the
@@ -431,4 +599,19 @@ async function generateClientRangePDF(clientId, from, to) {
   return renderBillingPDF(billing, { invoiceNo, outPath });
 }
 
-module.exports = { generateClientMonthPDF, generateClientRangePDF };
+// ─── generateClientMonthlySummaryPDF ───────────────────────────────────────────
+// Option 2 of the billing invoice download: one row per calendar month across
+// an arbitrary IST date range (yyyy-mm-dd from/to), instead of a row per
+// delivery. Months with no deliveries are simply absent from the table.
+async function generateClientMonthlySummaryPDF(clientId, from, to) {
+  const summary = await getClientMonthlySummary(clientId, from, to);
+  if (!summary) throw new Error(`Client ${clientId} not found`);
+
+  const compact = (d) => d.replace(/-/g, '');
+  const invoiceNo = `BILL-MS-${compact(from)}-${compact(to)}-${clientId.slice(-6).toUpperCase()}`;
+  const outPath = path.join(UPLOADS_DIR, `billing-monthly-${clientId}-${compact(from)}-${compact(to)}.pdf`);
+
+  return renderMonthlySummaryPDF(summary, { invoiceNo, outPath });
+}
+
+module.exports = { generateClientMonthPDF, generateClientRangePDF, generateClientMonthlySummaryPDF };

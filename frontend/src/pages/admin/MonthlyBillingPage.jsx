@@ -89,6 +89,21 @@ function periodInvoiceNumber(clientId, bill) {
   return invoiceNumberFor(clientId, bill.month, bill.year);
 }
 
+// The monthly-summary PDF always takes a from/to range — for a month-mode
+// bill (no range selected), derive that one month's own first/last day so
+// "Download Monthly Summary" still works (it just comes back as 1 row).
+function monthToRangeParams(month, year) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const from = `${year}-${pad(month)}-01`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const to = `${year}-${pad(month)}-${pad(lastDay)}`;
+  return { from, to };
+}
+
+function summaryRangeParams(bill) {
+  return isRangeBill(bill) ? periodParams(bill) : monthToRangeParams(bill.month, bill.year);
+}
+
 // ─── StatusBadge ──────────────────────────────────────────────────────────────
 // Status here comes straight from real Invoice.amountPaid/isPaid via the
 // billing API — the same figures Invoices/Statement show, never a
@@ -145,6 +160,7 @@ function ClientBillingModal({ bill, onClose, onChanged }) {
 
   const [waLoading, setWaLoading]   = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [msLoading, setMsLoading]   = useState(false);
   const [marking, setMarking]       = useState(false);
 
   async function handleWhatsApp() {
@@ -164,11 +180,24 @@ function ClientBillingModal({ bill, onClose, onChanged }) {
     setPdfLoading(true);
     try {
       await downloadClientPDF(clientId, periodParams(bill), `${invoiceNumber}.pdf`);
-      toast.success('PDF downloaded');
+      toast.success('Detailed invoice downloaded');
     } catch {
       toast.error('Download failed');
     } finally {
       setPdfLoading(false);
+    }
+  }
+
+  async function handleDownloadMonthlySummary() {
+    setMsLoading(true);
+    try {
+      const params = { ...summaryRangeParams(bill), type: 'monthly' };
+      await downloadClientPDF(clientId, params, `${invoiceNumber}-monthly-summary.pdf`);
+      toast.success('Monthly summary downloaded');
+    } catch {
+      toast.error('Download failed');
+    } finally {
+      setMsLoading(false);
     }
   }
 
@@ -379,8 +408,19 @@ td{padding:8px 12px;border:1px solid #e2e8f0}
                 {pdfLoading ? <Loader2 size={15} className="animate-spin text-white" /> : <Download size={15} className="text-white" />}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-slate-800">Download PDF</p>
-                <p className="text-xs text-slate-400">Save to device</p>
+                <p className="text-sm font-semibold text-slate-800">Download Detailed Invoice</p>
+                <p className="text-xs text-slate-400">One row per delivery</p>
+              </div>
+            </button>
+
+            <button onClick={handleDownloadMonthlySummary} disabled={msLoading}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-60 transition-colors text-left">
+              <div className="w-8 h-8 rounded-md bg-indigo-600 flex items-center justify-center shrink-0">
+                {msLoading ? <Loader2 size={15} className="animate-spin text-white" /> : <Calendar size={15} className="text-white" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-slate-800">Download Monthly Summary</p>
+                <p className="text-xs text-slate-400">One row per month</p>
               </div>
             </button>
 
