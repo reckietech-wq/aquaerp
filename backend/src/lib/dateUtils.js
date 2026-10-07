@@ -37,6 +37,12 @@ function formatIstDate(date) {
   return dayjs(date).tz(IST).format('DD/MM/YYYY');
 }
 
+// dd/mm/yyyy hh:mm AM/PM, in IST — for timestamps where time-of-day matters
+// (e.g. payment history), not just the calendar date.
+function formatIstDateTime(date) {
+  return dayjs(date).tz(IST).format('DD/MM/YYYY hh:mm A');
+}
+
 module.exports = {
   IST,
   istDayStart,
@@ -45,4 +51,5 @@ module.exports = {
   istMonthEnd,
   currentIstYearMonth,
   formatIstDate,
+  formatIstDateTime,
 };

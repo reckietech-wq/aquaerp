@@ -1,9 +1,21 @@
 const prisma = require('../lib/prisma');
+const { formatIstDateTime } = require('../lib/dateUtils');
 
 const MAX_PLAUSIBLE_BOTTLES = 1000;
 
 function isValidRate(rate) {
   return !isNaN(parseFloat(rate)) && parseFloat(rate) > 0;
+}
+
+// Admins always pass; drivers only pass for their own assigned clients —
+// same ownership pattern as invoiceController's canAccessClient, duplicated
+// locally since routes/clients.js doesn't share a controller with invoices.
+async function canAccessClient(req, clientId) {
+  if (req.user.role !== 'DRIVER') return true;
+  const driverProfile = await prisma.driver.findUnique({ where: { userId: req.user.id } });
+  if (!driverProfile || !driverProfile.isActive) return false;
+  const client = await prisma.client.findUnique({ where: { id: clientId }, select: { assignedDriverId: true } });
+  return !!client && client.assignedDriverId === driverProfile.id;
 }
 
 async function createClient(req, res) {
@@ -168,16 +180,40 @@ async function deleteClient(req, res) {
   res.json({ message: 'Client permanently deleted' });
 }
 
+// ─── GET /api/clients/:id/payments  (ADMIN or the client's assigned DRIVER) ──
+// Full payment history, newest first — every recordPayment/markInvoicePaid
+// cash/online payment plus every auto-applied-credit entry, each carrying its
+// own amount, method, and resulting balance. `type` mirrors paymentMethod but
+// normalized to uppercase (CASH/ONLINE/CREDIT_APPLIED) since the admin UI and
+// the driver app have historically sent different casing for the same
+// method — this keeps display/grouping consistent without touching the raw
+// stored value. `istFormatted` is "dd/mm/yyyy hh:mm AM/PM" so callers never
+// have to do their own IST conversion.
 async function getClientPayments(req, res) {
   const client = await prisma.client.findUnique({ where: { id: req.params.id } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
+  if (!(await canAccessClient(req, req.params.id))) {
+    return res.status(403).json({ error: 'Not authorized for this client' });
+  }
 
   const payments = await prisma.paymentHistory.findMany({
     where: { clientId: req.params.id },
     orderBy: { createdAt: 'desc' },
   });
 
-  res.json(payments);
+  res.json(payments.map((p) => ({
+    id: p.id,
+    createdAt: p.createdAt,
+    istFormatted: formatIstDateTime(p.createdAt),
+    amountPaid: p.amountPaid,
+    paymentMethod: p.paymentMethod,
+    type: (p.paymentMethod || '').toUpperCase(),
+    balanceBefore: p.balanceBefore,
+    balanceAfter: p.balanceAfter,
+    invoiceId: p.invoiceId,
+    note: p.note,
+    recordedBy: p.recordedBy,
+  })));
 }
 
 // ─── DELETE /api/clients/:id/payments/:paymentId  (ADMIN only) ───────────────

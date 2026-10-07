@@ -13,6 +13,9 @@ router.use(verifyToken);
 // Consolidated statement — admin or the client's assigned driver (ownership
 // check happens inside the controller), so this must skip requireAdmin.
 router.get('/:clientId/statement', getClientStatement);
+// Same ownership pattern — the driver app can show its own client's payment
+// history without needing admin rights.
+router.get('/:id/payments', getClientPayments);
 
 router.use(requireAdmin);
 
@@ -21,7 +24,6 @@ router.get('/', listClients);
 // Static path before /:id
 router.post('/recalculate-all-bottles', recalculateAllBottles);
 router.get('/:id', getClient);
-router.get('/:id/payments', getClientPayments);
 router.delete('/:id/payments/:paymentId', deletePayment);
 router.get('/:clientId/summary', getClientSummary);
 router.post('/:clientId/historical-record', addHistoricalRecord);

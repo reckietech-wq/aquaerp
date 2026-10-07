@@ -424,36 +424,60 @@ export default function EditClientModal({ client, drivers, onClose, onSaved }) {
             ) : payments.length === 0 ? (
               <p className="text-sm text-slate-400 italic">No payments recorded yet</p>
             ) : (
-              <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
-                {payments.map((p) => (
-                  <div
-                    key={p.id}
-                    className="flex items-center gap-3 bg-slate-50 rounded-xl px-3 py-2.5 text-sm"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <span className="text-slate-700 font-semibold">
-                        ₹{Number(p.amountPaid).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                      </span>
-                      <span className="text-slate-400 mx-1.5">·</span>
-                      <span className="text-xs text-slate-500">
-                        Balance after: ₹{Number(p.balanceAfter).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold shrink-0 ${p.paymentMethod === 'CASH' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
-                      {p.paymentMethod}
-                    </span>
-                    <span className="text-xs text-slate-400 shrink-0">{fmtDate(p.createdAt)}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleDeletePayment(p)}
-                      disabled={deletingPaymentId === p.id}
-                      title="Delete payment"
-                      className="p-1 rounded-lg text-slate-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors shrink-0"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                ))}
+              <div className="max-h-64 overflow-y-auto border border-slate-100 rounded-xl">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-slate-50">
+                    <tr className="text-left text-xs font-semibold text-slate-400 uppercase tracking-wide">
+                      <th className="px-3 py-2">Date &amp; Time (IST)</th>
+                      <th className="px-3 py-2 text-right">Amount</th>
+                      <th className="px-3 py-2">Method</th>
+                      <th className="px-3 py-2">Type</th>
+                      <th className="px-3 py-2 text-right">Balance After</th>
+                      <th className="px-3 py-2 w-8" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {payments.map((p) => {
+                      const isCredit = p.type === 'CREDIT_APPLIED';
+                      return (
+                        <tr key={p.id} className={isCredit ? 'bg-slate-50' : ''}>
+                          <td className="px-3 py-2.5 text-xs text-slate-500 whitespace-nowrap">
+                            {p.istFormatted ?? fmtDate(p.createdAt)}
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-semibold text-slate-700 whitespace-nowrap">
+                            ₹{Number(p.amountPaid).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-3 py-2.5 text-xs text-slate-500">{p.paymentMethod}</td>
+                          <td className="px-3 py-2.5">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ${
+                              isCredit
+                                ? 'bg-slate-200 text-green-700'
+                                : p.type === 'CASH'
+                                ? 'bg-amber-100 text-amber-700'
+                                : 'bg-blue-100 text-blue-700'
+                            }`}>
+                              {isCredit ? 'Credit Applied' : p.type}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-right text-xs text-slate-500 whitespace-nowrap">
+                            ₹{Number(p.balanceAfter).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <button
+                              type="button"
+                              onClick={() => handleDeletePayment(p)}
+                              disabled={deletingPaymentId === p.id}
+                              title="Delete payment"
+                              className="p-1 rounded-lg text-slate-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
