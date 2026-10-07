@@ -16,8 +16,25 @@ async function getMyClients(req, res) {
 
   const { start, end } = todayRange();
 
+  // PHASE 1 (multi-location): every active driver can deliver to every
+  // active client, so this returns ALL active clients — not just ones
+  // assigned to this driver. assignedDriverId is no longer a restriction
+  // here (it's still shown per-client and still drives the admin "assigned
+  // driver" view/reports). With ~234 clients, optional ?route=/&search=
+  // let the app narrow the list client-side-sized without a separate endpoint.
+  const { route, search } = req.query;
   const clients = await prisma.client.findMany({
-    where: { assignedDriverId: driver.id, isActive: true },
+    where: {
+      isActive: true,
+      ...(route && { route }),
+      ...(search && {
+        OR: [
+          { name:    { contains: search } },
+          { mobile:  { contains: search } },
+          { address: { contains: search } },
+        ],
+      }),
+    },
     include: {
       // Only COMPLETED deliveries count as "delivered" — matches
       // getSummary's filter and dashboardController's deliveryWhere, so

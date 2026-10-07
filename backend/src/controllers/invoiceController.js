@@ -1,15 +1,10 @@
 const prisma = require('../lib/prisma');
 const { istDayStart, istDayEnd } = require('../lib/dateUtils');
 
-// Returns true if the requesting user is allowed to act on the given client's
-// invoices — admins always pass; drivers must be that client's assigned driver.
-async function canAccessClient(req, clientId) {
-  if (req.user.role !== 'DRIVER') return true;
-  const driverProfile = await prisma.driver.findUnique({ where: { userId: req.user.id } });
-  if (!driverProfile || !driverProfile.isActive) return false;
-  const client = await prisma.client.findUnique({ where: { id: clientId }, select: { assignedDriverId: true } });
-  return !!client && client.assignedDriverId === driverProfile.id;
-}
+// PHASE 1 (multi-location): any authenticated driver may act on any client's
+// invoices — Client.assignedDriverId is no longer an access restriction here,
+// only informational (admin "assigned driver" view/reports). Deliveries still
+// attribute to whichever driver actually recorded them.
 
 // ─── POST /api/invoices/generate  (DRIVER only) ───────────────────────────────
 async function generateInvoice(req, res) {
@@ -186,9 +181,6 @@ async function getInvoiceById(req, res) {
     },
   });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
-  if (!(await canAccessClient(req, invoice.clientId))) {
-    return res.status(403).json({ error: 'Not authorized for this client' });
-  }
   res.json(invoice);
 }
 
@@ -198,9 +190,6 @@ async function getClientInvoices(req, res) {
 
   const client = await prisma.client.findUnique({ where: { id: clientId } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
-  if (!(await canAccessClient(req, clientId))) {
-    return res.status(403).json({ error: 'Not authorized for this client' });
-  }
 
   // Last paid invoice + outstanding bottles — useful for the driver app pre-fill
   const lastPaid = await prisma.invoice.findFirst({
@@ -246,9 +235,6 @@ async function markInvoicePaid(req, res) {
     include: { client: true },
   });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
-  if (!(await canAccessClient(req, invoice.clientId))) {
-    return res.status(403).json({ error: 'Not authorized for this client' });
-  }
   if (invoice.isPaid) return res.json({ message: 'Invoice already paid' });
 
   const paymentMethod = req.body?.paymentMethod || 'CASH';
@@ -335,9 +321,6 @@ async function recordPayment(req, res) {
     include: { client: true },
   });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
-  if (!(await canAccessClient(req, invoice.clientId))) {
-    return res.status(403).json({ error: 'Not authorized for this client' });
-  }
 
   // outstandingBalance already includes every unpaid invoice's totalAmount
   // (added at invoice-creation time), so a payment only ever subtracts the
@@ -452,9 +435,6 @@ async function getClientStatement(req, res) {
     },
   });
   if (!client) return res.status(404).json({ error: 'Client not found' });
-  if (!(await canAccessClient(req, clientId))) {
-    return res.status(403).json({ error: 'Not authorized for this client' });
-  }
 
   const unpaidInvoices = await prisma.invoice.findMany({
     where: { clientId, isPaid: false },
