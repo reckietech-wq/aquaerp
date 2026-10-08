@@ -1,6 +1,6 @@
 const prisma = require('../lib/prisma');
 const { istDayStart, istDayEnd } = require('../lib/dateUtils');
-const { ensureCustomer } = require('../lib/customerBalance');
+const { ensureCustomer, mirrorToAllClients } = require('../lib/customerBalance');
 
 // PHASE 1 (multi-location): any authenticated driver may act on any client's
 // invoices — Client.assignedDriverId is no longer an access restriction here,
@@ -130,11 +130,8 @@ async function generateInvoice(req, res) {
       where: { id: customer.id },
       data: { outstandingBalance: finalOutstanding, creditBalance: finalCredit },
     }),
-    // Belt-and-suspenders mirror onto the single linked client until phase 3.
-    prisma.client.update({
-      where: { id: clientId },
-      data: { outstandingBalance: finalOutstanding, creditBalance: finalCredit },
-    }),
+    // Belt-and-suspenders mirror onto every one of this customer's locations.
+    mirrorToAllClients(prisma, customer.id, { outstandingBalance: finalOutstanding, creditBalance: finalCredit }),
   ];
 
   if (creditApplied > 0) {
@@ -294,11 +291,8 @@ async function markInvoicePaid(req, res) {
         where: { id: customer.id },
         data: { outstandingBalance: balanceAfter, creditBalance: creditAfter },
       }),
-      // Belt-and-suspenders mirror onto the single linked client until phase 3.
-      prisma.client.update({
-        where: { id: invoice.clientId },
-        data: { outstandingBalance: balanceAfter, creditBalance: creditAfter },
-      }),
+      // Belt-and-suspenders mirror onto every one of this customer's locations.
+      mirrorToAllClients(prisma, customer.id, { outstandingBalance: balanceAfter, creditBalance: creditAfter }),
       prisma.paymentHistory.create({
         data: {
           clientId: invoice.clientId,
@@ -413,16 +407,13 @@ async function recordPayment(req, res) {
 
   const newBalance = balanceBefore - actualApplied;
 
-  const [updatedCustomer, updatedClientMirror, payment, ...updatedInvoices] = await prisma.$transaction([
+  const [updatedCustomer, , payment, ...updatedInvoices] = await prisma.$transaction([
     prisma.customer.update({
       where: { id: customer.id },
       data: { outstandingBalance: newBalance, creditBalance: creditAfter },
     }),
-    // Belt-and-suspenders mirror onto the single linked client until phase 3.
-    prisma.client.update({
-      where: { id: invoice.clientId },
-      data: { outstandingBalance: newBalance, creditBalance: creditAfter },
-    }),
+    // Belt-and-suspenders mirror onto every one of this customer's locations.
+    mirrorToAllClients(prisma, customer.id, { outstandingBalance: newBalance, creditBalance: creditAfter }),
     prisma.paymentHistory.create({
       data: {
         clientId: invoice.clientId,
@@ -448,7 +439,7 @@ async function recordPayment(req, res) {
   res.json({
     invoice: updatedInvoice,
     invoicesUpdated: updatedInvoices,
-    client: { outstandingBalance: updatedClientMirror.outstandingBalance, creditBalance: updatedClientMirror.creditBalance },
+    client: { outstandingBalance: updatedCustomer.outstandingBalance, creditBalance: updatedCustomer.creditBalance },
     payment,
     message: 'Payment recorded successfully',
   });
@@ -473,12 +464,23 @@ async function getClientStatement(req, res) {
   // overwritten from it below so the app sees the identical field paths.
   const customer = await ensureCustomer(client);
 
+  // PHASE 3: a customer may have multiple locations (Clients) — the
+  // statement is customer-wide, so it's queried by customerId rather than
+  // this one clientId, and spans every unpaid invoice across all of the
+  // customer's locations, not just the one requested.
   const unpaidInvoices = await prisma.invoice.findMany({
-    where: { clientId, isPaid: false },
+    where: { client: { customerId: customer.id }, isPaid: false },
     orderBy: { createdAt: 'desc' },
     include: {
       delivery: { select: { id: true, deliveryDate: true, filledBottlesDelivered: true } },
+      client: { select: { id: true, name: true, address: true } },
     },
+  });
+
+  const locationsList = await prisma.client.findMany({
+    where: { customerId: customer.id },
+    select: { id: true, name: true, address: true, route: true },
+    orderBy: { createdAt: 'asc' },
   });
 
   const { start, end } = { start: istDayStart(), end: istDayEnd() };
@@ -492,6 +494,11 @@ async function getClientStatement(req, res) {
     amount: Number(inv.totalAmount),
     isPaid: inv.isPaid,
     amountPaid: Number(inv.amountPaid),
+    // Which of the customer's locations this delivery belongs to — only
+    // meaningful once a customer has more than one (phase 3).
+    locationId: inv.client.id,
+    locationName: inv.client.name,
+    locationAddress: inv.client.address,
   }));
 
   const todaysUnpaid = unpaidDeliveries.filter((d) => d.date >= start && d.date <= end);
@@ -509,6 +516,19 @@ async function getClientStatement(req, res) {
   res.json({
     client: { ...client, outstandingBalance: customer.outstandingBalance, creditBalance: customer.creditBalance },
     unpaidDeliveries,
+    // PHASE 3: per-location breakdown of what's unpaid, within the one
+    // combined customer statement above.
+    locations: locationsList.map((loc) => {
+      const own = unpaidDeliveries.filter((d) => d.locationId === loc.id);
+      return {
+        clientId: loc.id,
+        name: loc.name,
+        address: loc.address,
+        route: loc.route,
+        unpaidCount: own.length,
+        unpaidAmount: own.reduce((s, d) => s + (d.amount - d.amountPaid), 0),
+      };
+    }),
     summary: {
       previousOutstanding,
       todaysTotal,
@@ -554,7 +574,7 @@ async function setInvoiceStatus(req, res) {
         include: { client: { select: { id: true, name: true, mobile: true, outstandingBalance: true } } },
       }),
       prisma.customer.update({ where: { id: customer.id }, data: { outstandingBalance: balanceAfter } }),
-      prisma.client.update({ where: { id: invoice.clientId }, data: { outstandingBalance: balanceAfter } }),
+      mirrorToAllClients(prisma, customer.id, { outstandingBalance: balanceAfter }),
     ]);
     return res.json(updated);
   }
@@ -568,7 +588,7 @@ async function setInvoiceStatus(req, res) {
         include: { client: { select: { id: true, name: true, mobile: true, outstandingBalance: true } } },
       }),
       prisma.customer.update({ where: { id: customer.id }, data: { outstandingBalance: balanceAfter } }),
-      prisma.client.update({ where: { id: invoice.clientId }, data: { outstandingBalance: balanceAfter } }),
+      mirrorToAllClients(prisma, customer.id, { outstandingBalance: balanceAfter }),
     ]);
     return res.json(updated);
   }
@@ -606,10 +626,7 @@ async function deleteInvoice(req, res) {
         where: { id: customer.id },
         data: { outstandingBalance: { decrement: remainingUnpaid } },
       }),
-      prisma.client.update({
-        where: { id: invoice.clientId },
-        data: { outstandingBalance: { decrement: remainingUnpaid } },
-      }),
+      mirrorToAllClients(prisma, customer.id, { outstandingBalance: { decrement: remainingUnpaid } }),
     );
   }
 

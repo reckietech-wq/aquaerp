@@ -7,7 +7,7 @@ const {
 } = require('../services/billingService');
 const { generateClientMonthPDF, generateClientRangePDF, generateClientMonthlySummaryPDF } = require('../services/pdfService');
 const { buildWhatsAppMessage, buildWhatsAppURL } = require('../services/whatsappService');
-const { ensureCustomer } = require('../lib/customerBalance');
+const { ensureCustomer, mirrorToAllClients } = require('../lib/customerBalance');
 
 function resolveMonthYear(query) {
   let { month, year } = query;
@@ -215,8 +215,8 @@ async function markMonthPaid(req, res) {
   await prisma.$transaction([
     ...invoiceUpdates,
     prisma.customer.update({ where: { id: customer.id }, data: { outstandingBalance: balanceAfter } }),
-    // Belt-and-suspenders mirror onto the single linked client until phase 3.
-    prisma.client.update({ where: { id: clientId }, data: { outstandingBalance: balanceAfter } }),
+    // Belt-and-suspenders mirror onto every one of this customer's locations.
+    mirrorToAllClients(prisma, customer.id, { outstandingBalance: balanceAfter }),
     prisma.paymentHistory.create({
       data: {
         clientId,

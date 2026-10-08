@@ -45,6 +45,7 @@ const billingRoutes      = require('./routes/billing');
 const reportRoutes       = require('./routes/reports');
 const inventoryRoutes    = require('./routes/inventory');
 const settingsRoutes     = require('./routes/settings');
+const customerRoutes     = require('./routes/customers');
 
 app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth',      authRoutes);
@@ -58,6 +59,7 @@ app.use('/api/billing',       billingRoutes);
 app.use('/api/reports',       reportRoutes);
 app.use('/api/inventory',     inventoryRoutes);
 app.use('/api/settings',      settingsRoutes);
+app.use('/api/customers',     customerRoutes);
 
 // Serve generated PDFs as static files
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));

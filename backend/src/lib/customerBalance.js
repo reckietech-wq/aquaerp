@@ -41,14 +41,16 @@ async function getCustomerIdForClient(clientId) {
   return customer.id;
 }
 
-// Belt-and-suspenders mirror: writes the same new balance values onto the
-// client row the Customer is linked through, until phase 3 makes
-// Client.outstandingBalance/creditBalance fully legacy. Customer stays
-// authoritative — this is purely so nothing reading Client.* directly (and
-// nothing else in this codebase should write it for balance purposes) drifts
-// out of sync.
-function mirrorToClient(tx, clientId, data) {
-  return tx.client.update({ where: { id: clientId }, data });
+// Belt-and-suspenders mirror: writes the same new balance values onto every
+// Client (location) linked to this Customer, until Client.outstandingBalance
+// /creditBalance become fully legacy. Customer stays authoritative — this is
+// purely so nothing reading Client.* directly drifts out of sync. PHASE 3: a
+// customer can have more than one location sharing the one balance, so the
+// mirror must cover all of them — mirroring onto only the location whose
+// invoice/payment triggered the write would leave its siblings' columns
+// stale (never read as truth, but still a confusing rough edge).
+function mirrorToAllClients(tx, customerId, data) {
+  return tx.client.updateMany({ where: { customerId }, data });
 }
 
-module.exports = { ensureCustomer, getCustomerIdForClient, mirrorToClient };
+module.exports = { ensureCustomer, getCustomerIdForClient, mirrorToAllClients };

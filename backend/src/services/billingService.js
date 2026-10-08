@@ -30,16 +30,24 @@ function customRange(from, to) {
   return { start: istDayStart(from), end: istDayEnd(to) };
 }
 
-// Shared core: one client's billing for an arbitrary [start, end] delivery-
-// date window (inclusive of end — callers pass either an exclusive month
-// boundary via `lt` semantics or an inclusive day boundary via `lte`, so this
-// takes the already-resolved Prisma comparator to stay correct either way).
+// Shared core: billing for an arbitrary [start, end] delivery-date window
+// (inclusive of end — callers pass either an exclusive month boundary via
+// `lt` semantics or an inclusive day boundary via `lte`, so this takes the
+// already-resolved Prisma comparator to stay correct either way).
+//
+// PHASE 3: a customer may have multiple locations (Clients) sharing one
+// balance — this is called with ONE location's clientId (whichever the
+// caller was browsing), but the billing itself spans every location under
+// that same customer, since invoices/outstanding are customer-wide as of
+// phase 2b. `deliveries` carries a locationId/locationName per line so a
+// single-location customer renders identically to before, while a
+// multi-location one shows every location's deliveries combined.
 async function getClientBillingCore(clientId, dateWhere) {
   const client = await prisma.client.findUnique({
     where: { id: clientId },
     select: {
       id: true, name: true, address: true, mobile: true, route: true,
-      ratePerBottle: true, outstandingBalance: true,
+      ratePerBottle: true, outstandingBalance: true, customerId: true,
       customer: { select: { outstandingBalance: true } },
       assignedDriver: {
         select: {
@@ -52,9 +60,15 @@ async function getClientBillingCore(clientId, dateWhere) {
   if (!client) return null;
 
   const invoices = await prisma.invoice.findMany({
-    where: { clientId, delivery: { deliveryDate: dateWhere } },
+    where: {
+      client: client.customerId ? { customerId: client.customerId } : { id: clientId },
+      delivery: { deliveryDate: dateWhere },
+    },
     orderBy: { delivery: { deliveryDate: 'asc' } },
-    include: { delivery: { select: { deliveryDate: true, filledBottlesDelivered: true } } },
+    include: {
+      delivery: { select: { deliveryDate: true, filledBottlesDelivered: true } },
+      client: { select: { id: true, name: true } },
+    },
   });
 
   const deliveries = invoices.map((inv) => ({
@@ -67,6 +81,8 @@ async function getClientBillingCore(clientId, dateWhere) {
     paymentMethod:  inv.paymentMethod,
     invoiceNumber:  inv.invoiceNumber,
     invoiceId:      inv.id,
+    locationId:     inv.client.id,
+    locationName:   inv.client.name,
   }));
 
   const totalBottles = deliveries.reduce((s, d) => s + d.bottles, 0);
@@ -89,6 +105,7 @@ async function getClientBillingCore(clientId, dateWhere) {
     driverVehicle: client.assignedDriver?.vehicleNumber ?? null,
     driverRoute:   client.assignedDriver?.route ?? null,
     ratePerBottle: Number(client.ratePerBottle),
+    customerId:    client.customerId,
     deliveries,
     totalBottles,
     totalBilled,
@@ -123,7 +140,11 @@ async function getClientRangeBilling(clientId, from, to) {
 }
 
 // All clients with at least one invoice in that month, aggregated the same
-// way as getClientMonthBilling (one row per client).
+// way as getClientMonthBilling (one row per client) — PHASE 3: deduped by
+// customerId afterward, since getClientBillingCore now returns the full
+// combined-customer total for every location row; without dedup a
+// multi-location customer would show the same combined total once per
+// location, which reads as duplicated rows rather than one customer.
 async function listMonthBilling({ month, year, driverId, search, status }) {
   const { start, end } = monthRange(month, year);
   const clientWhere = buildClientWhere({ driverId, search, dateWhere: { gte: start, lt: end } });
@@ -137,7 +158,7 @@ async function listMonthBilling({ month, year, driverId, search, status }) {
   let rows = await Promise.all(
     matchingClients.map((c) => getClientMonthBilling(c.id, month, year)),
   );
-  rows = rows.filter(Boolean);
+  rows = dedupeByCustomer(rows.filter(Boolean));
   return filterByStatus(rows, status);
 }
 
@@ -156,8 +177,21 @@ async function listRangeBilling({ from, to, driverId, search, status }) {
   let rows = await Promise.all(
     matchingClients.map((c) => getClientRangeBilling(c.id, from, to)),
   );
-  rows = rows.filter(Boolean);
+  rows = dedupeByCustomer(rows.filter(Boolean));
   return filterByStatus(rows, status);
+}
+
+// Keeps the first row per customerId (locations are already orderBy name:
+// 'asc', so this is deterministic) — a client with no customerId (shouldn't
+// happen post phase-2a/2b, but defensively) is never deduped against anything.
+function dedupeByCustomer(rows) {
+  const seen = new Set();
+  return rows.filter((r) => {
+    if (!r.customerId) return true;
+    if (seen.has(r.customerId)) return false;
+    seen.add(r.customerId);
+    return true;
+  });
 }
 
 // One row per IST calendar month touched by [from, to] (inclusive) that
@@ -168,7 +202,7 @@ async function getClientMonthlySummary(clientId, from, to) {
     where: { id: clientId },
     select: {
       id: true, name: true, address: true, mobile: true, route: true,
-      ratePerBottle: true, outstandingBalance: true,
+      ratePerBottle: true, outstandingBalance: true, customerId: true,
       customer: { select: { outstandingBalance: true } },
       assignedDriver: {
         select: {
@@ -180,6 +214,10 @@ async function getClientMonthlySummary(clientId, from, to) {
   });
   if (!client) return null;
 
+  // PHASE 3: spans every location under the same customer, same as
+  // getClientBillingCore above.
+  const invoiceClientWhere = client.customerId ? { customerId: client.customerId } : { id: clientId };
+
   const fromIst = dayjs.tz(from, IST);
   const toIst   = dayjs.tz(to, IST);
 
@@ -190,7 +228,7 @@ async function getClientMonthlySummary(clientId, from, to) {
   while (cy < ey || (cy === ey && cm <= em)) {
     const { start, end } = monthRange(cm, cy);
     const invoices = await prisma.invoice.findMany({
-      where: { clientId, delivery: { deliveryDate: { gte: start, lt: end } } },
+      where: { client: invoiceClientWhere, delivery: { deliveryDate: { gte: start, lt: end } } },
       include: { delivery: { select: { filledBottlesDelivered: true } } },
     });
     if (invoices.length > 0) {

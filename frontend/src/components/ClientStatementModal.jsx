@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
-import { X, Printer, IndianRupee, CheckCircle, Clock, Eye } from 'lucide-react';
+import { X, Printer, IndianRupee, CheckCircle, Clock, Eye, MapPin, Plus } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../lib/api';
 import InvoiceDetailModal from './InvoiceDetailModal';
@@ -43,6 +43,8 @@ function DeliveryStatusBadge({ isPaid, amountPaid, amount }) {
   );
 }
 
+const emptyLocationForm = { address: '', route: '', tempoNumber: '', ratePerBottle: '', assignedDriverId: '' };
+
 export default function ClientStatementModal({ clientId, onClose }) {
   const [statement, setStatement] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -50,6 +52,10 @@ export default function ClientStatementModal({ clientId, onClose }) {
   const [method, setMethod] = useState('CASH');
   const [paying, setPaying] = useState(false);
   const [detailInvoiceId, setDetailInvoiceId] = useState(null);
+  const [drivers, setDrivers] = useState([]);
+  const [addingLocation, setAddingLocation] = useState(false);
+  const [locationForm, setLocationForm] = useState(emptyLocationForm);
+  const [savingLocation, setSavingLocation] = useState(false);
   const overlayRef = useRef(null);
 
   async function fetchStatement() {
@@ -67,8 +73,35 @@ export default function ClientStatementModal({ clientId, onClose }) {
   useEffect(() => {
     setLoading(true);
     fetchStatement();
+    api.get('/api/drivers').then((r) => setDrivers(r.data)).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId]);
+
+  async function handleAddLocation() {
+    const { address, route, tempoNumber, ratePerBottle, assignedDriverId } = locationForm;
+    if (!address || !route || !tempoNumber || !assignedDriverId) {
+      toast.error('Address, route, tempo number, and driver are required');
+      return;
+    }
+    setSavingLocation(true);
+    try {
+      await api.post(`/api/customers/${statement.client.customerId}/locations`, {
+        address,
+        route,
+        tempoNumber,
+        assignedDriverId,
+        ...(ratePerBottle && { ratePerBottle: parseFloat(ratePerBottle) }),
+      });
+      toast.success('Location added');
+      setAddingLocation(false);
+      setLocationForm(emptyLocationForm);
+      await fetchStatement();
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Failed to add location');
+    } finally {
+      setSavingLocation(false);
+    }
+  }
 
   const oldestUnpaidInvoiceId = useMemo(() => {
     if (!statement?.unpaidDeliveries?.length) return null;
@@ -160,12 +193,102 @@ export default function ClientStatementModal({ clientId, onClose }) {
 
               {/* Client info */}
               <div className="px-6 py-4 border-b border-slate-200">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Statement For</p>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                  {statement.locations?.length > 1 ? 'Statement For (Customer)' : 'Statement For'}
+                </p>
                 <p className="font-semibold text-slate-800 text-base break-words">{statement.client.name}</p>
                 <p className="text-sm text-slate-600 mt-0.5 break-words">{statement.client.address}</p>
                 <p className="text-sm text-slate-500 mt-0.5">
                   Route {statement.client.route} · Rate ₹{fmt(statement.client.ratePerBottle)}/bottle
                 </p>
+              </div>
+
+              {/* Locations — this customer's balance is shared across every
+                  one of these; only shown with any weight once there's more
+                  than one, so a single-location customer looks the same as
+                  before. */}
+              <div className="px-6 py-4 border-b border-slate-200 print:hidden">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                    <MapPin size={13} /> Locations ({statement.locations?.length ?? 0})
+                  </p>
+                  <button
+                    onClick={() => setAddingLocation((v) => !v)}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:text-blue-900"
+                  >
+                    <Plus size={13} /> Add Location
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {(statement.locations ?? []).map((loc) => (
+                    <div
+                      key={loc.clientId}
+                      className="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs"
+                    >
+                      <span className="font-medium text-slate-700">{loc.name}</span>
+                      <span className="text-slate-400"> · Route {loc.route}</span>
+                      {loc.unpaidAmount > 0 && (
+                        <span className="text-red-600 font-semibold"> · ₹{fmt(loc.unpaidAmount)} due</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {addingLocation && (
+                  <div className="mt-3 p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        placeholder="Address"
+                        value={locationForm.address}
+                        onChange={(e) => setLocationForm((f) => ({ ...f, address: e.target.value }))}
+                        className="col-span-2 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <input
+                        placeholder="Route"
+                        value={locationForm.route}
+                        onChange={(e) => setLocationForm((f) => ({ ...f, route: e.target.value }))}
+                        className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <input
+                        placeholder="Tempo Number"
+                        value={locationForm.tempoNumber}
+                        onChange={(e) => setLocationForm((f) => ({ ...f, tempoNumber: e.target.value }))}
+                        className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <input
+                        placeholder="Rate per bottle (optional)"
+                        type="number"
+                        value={locationForm.ratePerBottle}
+                        onChange={(e) => setLocationForm((f) => ({ ...f, ratePerBottle: e.target.value }))}
+                        className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <select
+                        value={locationForm.assignedDriverId}
+                        onChange={(e) => setLocationForm((f) => ({ ...f, assignedDriverId: e.target.value }))}
+                        className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      >
+                        <option value="">Assign driver…</option>
+                        {drivers.filter((d) => d.isActive).map((d) => (
+                          <option key={d.id} value={d.id}>{d.user.name} — Route {d.route}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => { setAddingLocation(false); setLocationForm(emptyLocationForm); }}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-100"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleAddLocation}
+                        disabled={savingLocation}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-900 text-white hover:bg-blue-800 disabled:opacity-50"
+                      >
+                        {savingLocation ? 'Adding…' : 'Save Location'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Deliveries table */}
@@ -177,6 +300,7 @@ export default function ClientStatementModal({ clientId, onClose }) {
                       <tr className="border-b border-slate-200 text-left text-slate-500">
                         <th className="pb-2 pr-3 font-medium">Date</th>
                         <th className="pb-2 pr-3 font-medium">Time</th>
+                        {statement.locations?.length > 1 && <th className="pb-2 pr-3 font-medium">Location</th>}
                         <th className="pb-2 pr-3 font-medium">Description</th>
                         <th className="pb-2 pr-3 font-medium text-right">Qty</th>
                         <th className="pb-2 pr-3 font-medium text-right">Rate</th>
@@ -188,7 +312,7 @@ export default function ClientStatementModal({ clientId, onClose }) {
                     <tbody>
                       {statement.unpaidDeliveries.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="py-6 text-center text-slate-400">
+                          <td colSpan={statement.locations?.length > 1 ? 9 : 8} className="py-6 text-center text-slate-400">
                             No unpaid deliveries — all clear!
                           </td>
                         </tr>
@@ -197,6 +321,9 @@ export default function ClientStatementModal({ clientId, onClose }) {
                           <tr key={d.invoiceId} className="border-b border-slate-100 last:border-0">
                             <td className="py-2.5 pr-3 text-slate-700 whitespace-nowrap">{fmtDate(d.date)}</td>
                             <td className="py-2.5 pr-3 text-slate-500 whitespace-nowrap">{fmtTime(d.date)}</td>
+                            {statement.locations?.length > 1 && (
+                              <td className="py-2.5 pr-3 text-slate-500 whitespace-nowrap">{d.locationName}</td>
+                            )}
                             <td className="py-2.5 pr-3 text-slate-700">Water Cans</td>
                             <td className="py-2.5 pr-3 text-right text-slate-800 font-medium">{d.filledBottles}</td>
                             <td className="py-2.5 pr-3 text-right text-slate-600">₹{fmt(d.rate)}</td>

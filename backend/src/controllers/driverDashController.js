@@ -48,8 +48,10 @@ async function getMyClients(req, res) {
       _count: { select: { deliveries: true } },
       // PHASE 2b: Customer is the balance's source of truth — mapped onto
       // this response's outstandingBalance/creditBalance fields below so the
-      // app keeps reading identical field paths.
-      customer: { select: { outstandingBalance: true, creditBalance: true } },
+      // app keeps reading identical field paths. PHASE 3: also surfaces
+      // customerId/customerName so the app can group multiple locations
+      // (Clients) belonging to the same customer.
+      customer: { select: { id: true, name: true, outstandingBalance: true, creditBalance: true } },
     },
     orderBy: { name: 'asc' },
   });
@@ -100,6 +102,10 @@ async function getMyClients(req, res) {
       ratePerBottle: c.ratePerBottle,
       outstandingBalance: c.customer?.outstandingBalance ?? c.outstandingBalance,
       creditBalance: c.customer?.creditBalance ?? c.creditBalance,
+      // PHASE 3: lets the app group locations by customer. A single-location
+      // customer still has these set — it just groups to a group of one.
+      customerId: c.customer?.id ?? c.customerId,
+      customerName: c.customer?.name ?? c.name,
       bottlesOut: c.bottlesOut,
       totalBottlesDelivered: c.totalBottlesDelivered,
       totalBottlesCollected: c.totalBottlesCollected,

@@ -1,6 +1,6 @@
 const prisma = require('../lib/prisma');
 const { formatIstDateTime } = require('../lib/dateUtils');
-const { ensureCustomer } = require('../lib/customerBalance');
+const { ensureCustomer, mirrorToAllClients } = require('../lib/customerBalance');
 
 const MAX_PLAUSIBLE_BOTTLES = 1000;
 
@@ -293,10 +293,7 @@ async function deletePayment(req, res) {
       where: { id: customer.id },
       data: { outstandingBalance: { increment: amountToReverse } },
     }),
-    prisma.client.update({
-      where: { id: clientId },
-      data: { outstandingBalance: { increment: amountToReverse } },
-    }),
+    mirrorToAllClients(prisma, customer.id, { outstandingBalance: { increment: amountToReverse } }),
     prisma.paymentHistory.delete({ where: { id: paymentId } }),
     ...invoiceUpdates,
   ]);
@@ -306,17 +303,21 @@ async function deletePayment(req, res) {
 
 // ─── POST /api/clients/:clientId/recalculate-balance  (ADMIN only) ───────────
 // Safety-net repair endpoint: recomputes outstandingBalance from scratch as
-// SUM(totalAmount - amountPaid) across every invoice for this client,
-// independent of whatever incremental history led to the current stored
-// value. Use after any manual DB correction or a delete sequence that may
-// have left the balance out of sync with the invoices themselves.
+// SUM(totalAmount - amountPaid) across every invoice for the CUSTOMER this
+// client belongs to (phase 3: that's every one of its locations, not just
+// this one client — balance is customer-wide), independent of whatever
+// incremental history led to the current stored value. Use after any manual
+// DB correction or a delete sequence that may have left the balance out of
+// sync with the invoices themselves.
 async function recalculateBalance(req, res) {
   const { clientId } = req.params;
   const client = await prisma.client.findUnique({ where: { id: clientId } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
 
+  const customer = await ensureCustomer(client);
+
   const agg = await prisma.invoice.aggregate({
-    where: { clientId },
+    where: { client: { customerId: customer.id } },
     _sum: { totalAmount: true, amountPaid: true },
   });
 
@@ -325,11 +326,13 @@ async function recalculateBalance(req, res) {
   // it has to be subtracted again here or recalculation would silently
   // "undo" every past auto-apply.
   const creditAppliedAgg = await prisma.paymentHistory.aggregate({
-    where: { clientId, paymentMethod: 'CREDIT_APPLIED' },
+    // Joined via client.customerId rather than PaymentHistory.customerId
+    // directly, so pre-phase-2b rows (written before that column existed)
+    // are still counted correctly.
+    where: { client: { customerId: customer.id }, paymentMethod: 'CREDIT_APPLIED' },
     _sum: { amountPaid: true },
   });
 
-  const customer = await ensureCustomer(client);
   const oldBalance = Number(customer.outstandingBalance);
   const rawBalance =
     Number(agg._sum.totalAmount ?? 0) -
@@ -339,7 +342,7 @@ async function recalculateBalance(req, res) {
 
   await prisma.$transaction([
     prisma.customer.update({ where: { id: customer.id }, data: { outstandingBalance: newBalance } }),
-    prisma.client.update({ where: { id: clientId }, data: { outstandingBalance: newBalance } }),
+    mirrorToAllClients(prisma, customer.id, { outstandingBalance: newBalance }),
   ]);
 
   res.json({ oldBalance, newBalance });
@@ -436,10 +439,13 @@ async function addHistoricalRecord(req, res) {
       where: { id: customer.id },
       data: { outstandingBalance: balanceAfter },
     }),
+    // Belt-and-suspenders mirror onto every one of this customer's
+    // locations, separate from the bottle-count fields below, which are
+    // per-location (NOT shared) and must only touch this one client.
+    mirrorToAllClients(prisma, customer.id, { outstandingBalance: balanceAfter }),
     prisma.client.update({
       where: { id: clientId },
       data: {
-        outstandingBalance: balanceAfter,
         totalBottlesDelivered: newTotalDelivered,
         totalBottlesCollected: newTotalCollected,
         bottlesOut: newBottlesOut,
@@ -447,7 +453,7 @@ async function addHistoricalRecord(req, res) {
     }),
   ];
 
-  const [invoice, , updatedClient] = await prisma.$transaction(invoiceOps);
+  const [invoice, , , updatedClient] = await prisma.$transaction(invoiceOps);
 
   if (paid > 0) {
     await prisma.paymentHistory.create({
@@ -520,10 +526,10 @@ async function deleteHistoricalRecord(req, res) {
       where: { id: customer.id },
       data: { outstandingBalance: { decrement: remainingUnpaid } },
     }),
+    mirrorToAllClients(prisma, customer.id, { outstandingBalance: { decrement: remainingUnpaid } }),
     prisma.client.update({
       where: { id: clientId },
       data: {
-        outstandingBalance: { decrement: remainingUnpaid },
         totalBottlesDelivered: newTotalDelivered,
         totalBottlesCollected: newTotalCollected,
         bottlesOut: newBottlesOut,
