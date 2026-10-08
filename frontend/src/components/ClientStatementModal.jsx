@@ -47,6 +47,7 @@ const emptyLocationForm = { address: '', route: '', tempoNumber: '', ratePerBott
 
 export default function ClientStatementModal({ clientId, onClose }) {
   const [statement, setStatement] = useState(null);
+  const [customerDetail, setCustomerDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState('CASH');
@@ -63,6 +64,14 @@ export default function ClientStatementModal({ clientId, onClose }) {
       const { data } = await api.get(`/api/clients/${clientId}/statement`);
       setStatement(data);
       setAmount(String(Number(data.summary.grandTotalDue).toFixed(2)));
+      // Full per-location fields (rate, bottlesOut) live on the customer
+      // record, not the statement — fetch it too so the Locations section
+      // below can show more than just the unpaid-amount breakdown.
+      if (data.client.customerId) {
+        api.get(`/api/customers/${data.client.customerId}`)
+          .then((r) => setCustomerDetail(r.data))
+          .catch(() => setCustomerDetail(null));
+      }
     } catch (e) {
       toast.error(e.response?.data?.error || 'Failed to load statement');
     } finally {
@@ -220,18 +229,29 @@ export default function ClientStatementModal({ clientId, onClose }) {
                   </button>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {(statement.locations ?? []).map((loc) => (
-                    <div
-                      key={loc.clientId}
-                      className="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs"
-                    >
-                      <span className="font-medium text-slate-700">{loc.name}</span>
-                      <span className="text-slate-400"> · Route {loc.route}</span>
-                      {loc.unpaidAmount > 0 && (
-                        <span className="text-red-600 font-semibold"> · ₹{fmt(loc.unpaidAmount)} due</span>
-                      )}
-                    </div>
-                  ))}
+                  {(statement.locations ?? []).map((loc) => {
+                    // rate/bottlesOut only live on the customer record
+                    // (fetched separately above), not the statement itself.
+                    const full = customerDetail?.locations?.find((l) => l.id === loc.clientId);
+                    return (
+                      <div
+                        key={loc.clientId}
+                        className="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs"
+                      >
+                        <span className="font-medium text-slate-700">{loc.name}</span>
+                        <span className="text-slate-400"> · Route {loc.route}</span>
+                        {full && (
+                          <>
+                            <span className="text-slate-400"> · ₹{fmt(full.ratePerBottle)}/bottle</span>
+                            <span className="text-slate-400"> · {full.bottlesOut} bottles out</span>
+                          </>
+                        )}
+                        {loc.unpaidAmount > 0 && (
+                          <span className="text-red-600 font-semibold"> · ₹{fmt(loc.unpaidAmount)} due</span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
                 {addingLocation && (
                   <div className="mt-3 p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-2">

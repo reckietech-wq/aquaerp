@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Search, Users, Pencil, MapPin, Phone, FileText, Trash2, History } from 'lucide-react';
+import { Plus, Search, Users, Pencil, MapPin, Phone, FileText, Trash2, History, Building2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../lib/api';
 import EditClientModal from '../../components/EditClientModal';
@@ -31,12 +31,27 @@ function SkeletonRow() {
   );
 }
 
-function MobileCard({ client, onEdit, onViewStatement, onViewHistory, onDelete }) {
+function LocationBadge({ count }) {
+  if (!count || count <= 1) return null;
+  return (
+    <span
+      title={`This customer has ${count} delivery locations sharing one balance`}
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 text-xs font-semibold whitespace-nowrap"
+    >
+      <Building2 size={10} /> {count} locations
+    </span>
+  );
+}
+
+function MobileCard({ client, locationCount, onEdit, onViewStatement, onViewHistory, onDelete }) {
   return (
     <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 space-y-3">
       <div className="flex items-start justify-between gap-2">
         <div>
-          <p className="font-semibold text-slate-800">{client.name}</p>
+          <div className="flex items-center gap-2">
+            <p className="font-semibold text-slate-800">{client.name}</p>
+            <LocationBadge count={locationCount} />
+          </div>
           <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
             <Phone size={10} /> {client.mobile}
           </p>
@@ -111,6 +126,9 @@ export default function ClientsPage() {
   const [statementClient, setStatementClient] = useState(null);
   const [historyClient, setHistoryClient] = useState(null);
   const [deleting, setDeleting] = useState(null);
+  // customerId -> how many locations (Clients) that customer has — used to
+  // badge multi-location customers so admin can tell them apart at a glance.
+  const [locationCounts, setLocationCounts] = useState({});
 
   async function fetchClients() {
     try {
@@ -128,6 +146,13 @@ export default function ClientsPage() {
 
   useEffect(() => {
     api.get('/api/drivers').then((r) => setDrivers(r.data)).catch(() => {});
+    api.get('/api/customers')
+      .then((r) => {
+        const map = {};
+        r.data.forEach((c) => { map[c.id] = c.locationCount; });
+        setLocationCounts(map);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -196,12 +221,21 @@ export default function ClientsPage() {
             {clients.length} total · {clients.filter((c) => c.isActive).length} active
           </p>
         </div>
-        <button
-          onClick={() => navigate('/admin/clients/new')}
-          className="inline-flex items-center gap-2 bg-blue-900 hover:bg-blue-800 text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
-        >
-          <Plus size={16} /> Add New Client
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => navigate('/admin/clients/new?mode=existing')}
+            className="inline-flex items-center gap-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
+            title="Add a location to an existing customer"
+          >
+            <Building2 size={16} /> Add Location
+          </button>
+          <button
+            onClick={() => navigate('/admin/clients/new')}
+            className="inline-flex items-center gap-2 bg-blue-900 hover:bg-blue-800 text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
+          >
+            <Plus size={16} /> Add New Client
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -257,7 +291,7 @@ export default function ClientsPage() {
           </div>
         ) : (
           filtered.map((c) => (
-            <MobileCard key={c.id} client={c} onEdit={setEditClient} onViewStatement={setStatementClient} onViewHistory={setHistoryClient} onDelete={handleDelete} />
+            <MobileCard key={c.id} client={c} locationCount={locationCounts[c.customerId]} onEdit={setEditClient} onViewStatement={setStatementClient} onViewHistory={setHistoryClient} onDelete={handleDelete} />
           ))
         )}
       </div>
@@ -304,6 +338,7 @@ export default function ClientsPage() {
                           {c.name[0].toUpperCase()}
                         </div>
                         <span className="font-medium text-slate-800">{c.name}</span>
+                        <LocationBadge count={locationCounts[c.customerId]} />
                       </div>
                     </td>
                     <td className="px-4 py-3 text-slate-600">{c.mobile}</td>
