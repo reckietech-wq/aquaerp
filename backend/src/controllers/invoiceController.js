@@ -676,9 +676,9 @@ async function getAllInvoices(req, res) {
 // ─── GET /api/invoices/by-client  (ADMIN only) ────────────────────────────────
 // Consolidated view: one row per client with aggregated invoice totals,
 // instead of one row per invoice. outstandingBalance is always read straight
-// off the Client record (the single source of truth maintained by
-// generateInvoice/recordPayment/etc) — never summed from invoices, so it
-// can't drift out of sync or get double-counted across rows.
+// off the linked Customer (the single source of truth as of phase 2b) —
+// never summed from invoices, so it can't drift out of sync or get
+// double-counted across rows.
 async function getInvoicesByClient(req, res) {
   const { status, from, to, search, clientId } = req.query;
   const page  = Math.max(1, parseInt(req.query.page  ?? '1', 10));
@@ -706,6 +706,7 @@ async function getInvoicesByClient(req, res) {
     where: clientWhere,
     include: {
       assignedDriver: { select: { user: { select: { name: true } } } },
+      customer: { select: { outstandingBalance: true } },
       invoices: {
         where: invoiceWhere,
         select: {
@@ -724,7 +725,7 @@ async function getInvoicesByClient(req, res) {
     const totalBottles = c.invoices.reduce((s, i) => s + (i.delivery?.filledBottlesDelivered ?? 0), 0);
     const totalBilled  = c.invoices.reduce((s, i) => s + Number(i.totalAmount), 0);
     const totalPaid    = c.invoices.reduce((s, i) => s + Number(i.amountPaid), 0);
-    const outstandingBalance = Number(c.outstandingBalance);
+    const outstandingBalance = Number(c.customer?.outstandingBalance ?? c.outstandingBalance);
 
     let rowStatus;
     if (outstandingBalance <= 0) rowStatus = 'PAID';
@@ -768,12 +769,12 @@ async function getInvoiceStats(req, res) {
       _sum: { amountPaid: true },
     }),
     prisma.client.count({ where: { invoices: { some: {} } } }),
-    // outstandingBalance is per-client, not per-invoice — sum it once per
-    // client (across clients that actually have invoices) rather than
+    // outstandingBalance lives on Customer (phase 2b) — sum it once per
+    // customer linked to a client that actually has invoices, rather than
     // summing unpaid invoice totals, which would double-count nothing here
-    // but drift from the authoritative Client.outstandingBalance ledger.
-    prisma.client.aggregate({
-      where: { invoices: { some: {} } },
+    // but drift from the authoritative Customer.outstandingBalance ledger.
+    prisma.customer.aggregate({
+      where: { clients: { some: { invoices: { some: {} } } } },
       _sum: { outstandingBalance: true },
     }),
   ]);

@@ -7,6 +7,7 @@ const {
 } = require('../services/billingService');
 const { generateClientMonthPDF, generateClientRangePDF, generateClientMonthlySummaryPDF } = require('../services/pdfService');
 const { buildWhatsAppMessage, buildWhatsAppURL } = require('../services/whatsappService');
+const { ensureCustomer } = require('../lib/customerBalance');
 
 function resolveMonthYear(query) {
   let { month, year } = query;
@@ -206,15 +207,20 @@ async function markMonthPaid(req, res) {
     });
   });
 
-  const balanceBefore = Number(client.outstandingBalance);
+  // Customer (not Client) is the balance's source of truth as of phase 2b.
+  const customer = await ensureCustomer(client);
+  const balanceBefore = Number(customer.outstandingBalance);
   const balanceAfter  = parseFloat((balanceBefore - totalRemaining).toFixed(2));
 
   await prisma.$transaction([
     ...invoiceUpdates,
+    prisma.customer.update({ where: { id: customer.id }, data: { outstandingBalance: balanceAfter } }),
+    // Belt-and-suspenders mirror onto the single linked client until phase 3.
     prisma.client.update({ where: { id: clientId }, data: { outstandingBalance: balanceAfter } }),
     prisma.paymentHistory.create({
       data: {
         clientId,
+        customerId: customer.id,
         amountPaid: totalRemaining,
         paymentMethod: method,
         balanceBefore,

@@ -103,10 +103,21 @@ async function getClient(req, res) {
         orderBy: { createdAt: 'desc' },
         take: 20,
       },
+      customer: { select: { outstandingBalance: true, creditBalance: true } },
     },
   });
   if (!client) return res.status(404).json({ error: 'Client not found' });
-  res.json(client);
+
+  // Customer is the balance's source of truth as of phase 2b — overwrite
+  // the response's outstandingBalance/creditBalance fields from it so the
+  // app keeps reading the identical field paths; the nested `customer`
+  // object was only fetched for that and isn't part of the response shape.
+  const { customer, ...rest } = client;
+  res.json({
+    ...rest,
+    outstandingBalance: customer?.outstandingBalance ?? client.outstandingBalance,
+    creditBalance: customer?.creditBalance ?? client.creditBalance,
+  });
 }
 
 async function updateClient(req, res) {
@@ -161,7 +172,9 @@ async function deleteClient(req, res) {
     return res.json({ message: 'Client deactivated' });
   }
 
-  const outstandingBalance = Number(client.outstandingBalance);
+  // Customer is the balance's source of truth as of phase 2b.
+  const customer = await ensureCustomer(client);
+  const outstandingBalance = Number(customer.outstandingBalance);
   if (outstandingBalance > 0) {
     const [deliveryCount, invoiceCount] = await Promise.all([
       prisma.delivery.count({ where: { clientId } }),
@@ -540,11 +553,14 @@ async function getClientSummary(req, res) {
     prisma.delivery.count({ where: { clientId, isHistorical: false } }),
   ]);
 
+  // Customer is the balance's source of truth as of phase 2b.
+  const customer = await ensureCustomer(client);
+
   res.json({
     totalBottlesDelivered: bottlesAgg._sum.filledBottlesDelivered ?? 0,
     totalAmountBilled: Number(invoiceAgg._sum.totalAmount ?? 0),
     totalPaid: Number(invoiceAgg._sum.amountPaid ?? 0),
-    outstandingBalance: Number(client.outstandingBalance),
+    outstandingBalance: Number(customer.outstandingBalance),
     historicalCount,
     liveCount,
   });
