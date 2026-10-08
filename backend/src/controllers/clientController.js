@@ -1,6 +1,6 @@
 const prisma = require('../lib/prisma');
 const { formatIstDateTime } = require('../lib/dateUtils');
-const { ensureCustomer, mirrorToAllClients } = require('../lib/customerBalance');
+const { ensureCustomer, applyCustomerBalance } = require('../lib/customerBalance');
 
 const MAX_PLAUSIBLE_BOTTLES = 1000;
 
@@ -289,11 +289,7 @@ async function deletePayment(req, res) {
   }
 
   await prisma.$transaction([
-    prisma.customer.update({
-      where: { id: customer.id },
-      data: { outstandingBalance: { increment: amountToReverse } },
-    }),
-    mirrorToAllClients(prisma, customer.id, { outstandingBalance: { increment: amountToReverse } }),
+    ...applyCustomerBalance(prisma, customer.id, { outstandingBalance: { increment: amountToReverse } }),
     prisma.paymentHistory.delete({ where: { id: paymentId } }),
     ...invoiceUpdates,
   ]);
@@ -340,10 +336,7 @@ async function recalculateBalance(req, res) {
     Number(creditAppliedAgg._sum.amountPaid ?? 0);
   const newBalance = parseFloat(Math.max(0, rawBalance).toFixed(2));
 
-  await prisma.$transaction([
-    prisma.customer.update({ where: { id: customer.id }, data: { outstandingBalance: newBalance } }),
-    mirrorToAllClients(prisma, customer.id, { outstandingBalance: newBalance }),
-  ]);
+  await prisma.$transaction(applyCustomerBalance(prisma, customer.id, { outstandingBalance: newBalance }));
 
   res.json({ oldBalance, newBalance });
 }
@@ -435,14 +428,10 @@ async function addHistoricalRecord(req, res) {
         createdAt: deliveryDate,
       },
     }),
-    prisma.customer.update({
-      where: { id: customer.id },
-      data: { outstandingBalance: balanceAfter },
-    }),
-    // Belt-and-suspenders mirror onto every one of this customer's
-    // locations, separate from the bottle-count fields below, which are
-    // per-location (NOT shared) and must only touch this one client.
-    mirrorToAllClients(prisma, customer.id, { outstandingBalance: balanceAfter }),
+    // applyCustomerBalance spreads to 2 ops (customer + mirror), kept
+    // separate from the bottle-count update below, which is per-location
+    // (NOT shared) and must only touch this one client.
+    ...applyCustomerBalance(prisma, customer.id, { outstandingBalance: balanceAfter }),
     prisma.client.update({
       where: { id: clientId },
       data: {
@@ -522,11 +511,7 @@ async function deleteHistoricalRecord(req, res) {
     prisma.paymentHistory.deleteMany({ where: { clientId, invoiceId: invoice.id } }),
     prisma.invoice.delete({ where: { id: invoiceId } }),
     prisma.delivery.delete({ where: { id: invoice.deliveryId } }),
-    prisma.customer.update({
-      where: { id: customer.id },
-      data: { outstandingBalance: { decrement: remainingUnpaid } },
-    }),
-    mirrorToAllClients(prisma, customer.id, { outstandingBalance: { decrement: remainingUnpaid } }),
+    ...applyCustomerBalance(prisma, customer.id, { outstandingBalance: { decrement: remainingUnpaid } }),
     prisma.client.update({
       where: { id: clientId },
       data: {

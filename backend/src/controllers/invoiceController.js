@@ -1,6 +1,6 @@
 const prisma = require('../lib/prisma');
 const { istDayStart, istDayEnd } = require('../lib/dateUtils');
-const { ensureCustomer, mirrorToAllClients } = require('../lib/customerBalance');
+const { ensureCustomer, applyCustomerBalance } = require('../lib/customerBalance');
 
 // PHASE 1 (multi-location): any authenticated driver may act on any client's
 // invoices — Client.assignedDriverId is no longer an access restriction here,
@@ -126,12 +126,7 @@ async function generateInvoice(req, res) {
         delivery: { select: { id: true, deliveryDate: true, filledBottlesDelivered: true } },
       },
     }),
-    prisma.customer.update({
-      where: { id: customer.id },
-      data: { outstandingBalance: finalOutstanding, creditBalance: finalCredit },
-    }),
-    // Belt-and-suspenders mirror onto every one of this customer's locations.
-    mirrorToAllClients(prisma, customer.id, { outstandingBalance: finalOutstanding, creditBalance: finalCredit }),
+    ...applyCustomerBalance(prisma, customer.id, { outstandingBalance: finalOutstanding, creditBalance: finalCredit }),
   ];
 
   if (creditApplied > 0) {
@@ -287,12 +282,7 @@ async function markInvoicePaid(req, res) {
 
   if (appliedToInvoice > 0 || excess > 0) {
     operations.push(
-      prisma.customer.update({
-        where: { id: customer.id },
-        data: { outstandingBalance: balanceAfter, creditBalance: creditAfter },
-      }),
-      // Belt-and-suspenders mirror onto every one of this customer's locations.
-      mirrorToAllClients(prisma, customer.id, { outstandingBalance: balanceAfter, creditBalance: creditAfter }),
+      ...applyCustomerBalance(prisma, customer.id, { outstandingBalance: balanceAfter, creditBalance: creditAfter }),
       prisma.paymentHistory.create({
         data: {
           clientId: invoice.clientId,
@@ -408,12 +398,7 @@ async function recordPayment(req, res) {
   const newBalance = balanceBefore - actualApplied;
 
   const [updatedCustomer, , payment, ...updatedInvoices] = await prisma.$transaction([
-    prisma.customer.update({
-      where: { id: customer.id },
-      data: { outstandingBalance: newBalance, creditBalance: creditAfter },
-    }),
-    // Belt-and-suspenders mirror onto every one of this customer's locations.
-    mirrorToAllClients(prisma, customer.id, { outstandingBalance: newBalance, creditBalance: creditAfter }),
+    ...applyCustomerBalance(prisma, customer.id, { outstandingBalance: newBalance, creditBalance: creditAfter }),
     prisma.paymentHistory.create({
       data: {
         clientId: invoice.clientId,
@@ -573,8 +558,7 @@ async function setInvoiceStatus(req, res) {
         data: { isPaid: true, paidAt: new Date(), amountPaid: totalAmount },
         include: { client: { select: { id: true, name: true, mobile: true, outstandingBalance: true } } },
       }),
-      prisma.customer.update({ where: { id: customer.id }, data: { outstandingBalance: balanceAfter } }),
-      mirrorToAllClients(prisma, customer.id, { outstandingBalance: balanceAfter }),
+      ...applyCustomerBalance(prisma, customer.id, { outstandingBalance: balanceAfter }),
     ]);
     return res.json(updated);
   }
@@ -587,8 +571,7 @@ async function setInvoiceStatus(req, res) {
         data: { isPaid: false, paidAt: null, amountPaid: 0 },
         include: { client: { select: { id: true, name: true, mobile: true, outstandingBalance: true } } },
       }),
-      prisma.customer.update({ where: { id: customer.id }, data: { outstandingBalance: balanceAfter } }),
-      mirrorToAllClients(prisma, customer.id, { outstandingBalance: balanceAfter }),
+      ...applyCustomerBalance(prisma, customer.id, { outstandingBalance: balanceAfter }),
     ]);
     return res.json(updated);
   }
@@ -621,13 +604,7 @@ async function deleteInvoice(req, res) {
   ];
   if (remainingUnpaid !== 0) {
     const customer = await ensureCustomer(invoice.client);
-    operations.push(
-      prisma.customer.update({
-        where: { id: customer.id },
-        data: { outstandingBalance: { decrement: remainingUnpaid } },
-      }),
-      mirrorToAllClients(prisma, customer.id, { outstandingBalance: { decrement: remainingUnpaid } }),
-    );
+    operations.push(...applyCustomerBalance(prisma, customer.id, { outstandingBalance: { decrement: remainingUnpaid } }));
   }
 
   await prisma.$transaction(operations);

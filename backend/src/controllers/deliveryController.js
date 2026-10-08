@@ -1,7 +1,7 @@
 const prisma = require('../lib/prisma');
 const { adjustInventory } = require('../services/inventoryService');
 const { istDayStart, istDayEnd } = require('../lib/dateUtils');
-const { ensureCustomer, mirrorToAllClients } = require('../lib/customerBalance');
+const { ensureCustomer, applyCustomerBalance } = require('../lib/customerBalance');
 
 const MAX_PLAUSIBLE_BOTTLES = 1000;
 
@@ -226,11 +226,7 @@ async function updateDelivery(req, res) {
           totalAmount: newTotalAmount,
         },
       }),
-      prisma.customer.update({
-        where: { id: customer.id },
-        data: { outstandingBalance: { increment: amountDelta } },
-      }),
-      mirrorToAllClients(prisma, customer.id, { outstandingBalance: { increment: amountDelta } }),
+      ...applyCustomerBalance(prisma, customer.id, { outstandingBalance: { increment: amountDelta } }),
     );
   }
 
@@ -308,13 +304,7 @@ async function deleteDelivery(req, res) {
     );
     if (remainingUnpaid !== 0) {
       const customer = await ensureCustomer(delivery.client);
-      operations.push(
-        prisma.customer.update({
-          where: { id: customer.id },
-          data: { outstandingBalance: { decrement: remainingUnpaid } },
-        }),
-        mirrorToAllClients(prisma, customer.id, { outstandingBalance: { decrement: remainingUnpaid } }),
-      );
+      operations.push(...applyCustomerBalance(prisma, customer.id, { outstandingBalance: { decrement: remainingUnpaid } }));
     }
   }
   operations.push(prisma.delivery.delete({ where: { id } }));

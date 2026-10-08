@@ -41,16 +41,21 @@ async function getCustomerIdForClient(clientId) {
   return customer.id;
 }
 
-// Belt-and-suspenders mirror: writes the same new balance values onto every
-// Client (location) linked to this Customer, until Client.outstandingBalance
-// /creditBalance become fully legacy. Customer stays authoritative — this is
-// purely so nothing reading Client.* directly drifts out of sync. PHASE 3: a
-// customer can have more than one location sharing the one balance, so the
-// mirror must cover all of them — mirroring onto only the location whose
-// invoice/payment triggered the write would leave its siblings' columns
-// stale (never read as truth, but still a confusing rough edge).
-function mirrorToAllClients(tx, customerId, data) {
-  return tx.client.updateMany({ where: { customerId }, data });
+// The ONLY way a balance field (outstandingBalance/creditBalance) should
+// ever be written. Returns the two ops as an array so callers spread them
+// into their own $transaction array — Customer is authoritative, and every
+// one of its Client locations' mirror columns moves with it in the SAME
+// transaction, atomically. This makes a Customer-only write (the mirror-
+// drift bug: Customer updated, Client left stale) structurally impossible —
+// there is no code path to call tx.customer.update on a balance field
+// without going through here, so there's nothing to forget to pair it with.
+// `data` is `{ outstandingBalance?, creditBalance? }` (plain values or
+// Prisma relative ops like `{ increment: n }` — updateMany supports both).
+function applyCustomerBalance(tx, customerId, data) {
+  return [
+    tx.customer.update({ where: { id: customerId }, data }),
+    tx.client.updateMany({ where: { customerId }, data }),
+  ];
 }
 
-module.exports = { ensureCustomer, getCustomerIdForClient, mirrorToAllClients };
+module.exports = { ensureCustomer, getCustomerIdForClient, applyCustomerBalance };
