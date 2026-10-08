@@ -83,11 +83,32 @@ model Client {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
+  // PHASE 2a (multi-location): nullable for now so the backfill script can
+  // migrate existing rows safely; money logic still reads/writes Client
+  // directly until phase 2b re-points it at Customer.
+  customerId String?
+
   assignedDriver Driver            @relation(fields: [assignedDriverId], references: [id])
+  customer       Customer?         @relation(fields: [customerId], references: [id])
   deliveries     Delivery[]
   invoices       Invoice[]
   monthlyBills   MonthlyBill[]
   paymentHistory PaymentHistory[]
+}
+
+// PHASE 2a (multi-location): the entity above Client — a customer may have
+// one or many Client "locations". Added with balances copied up from each
+// linked Client by backfill-customers.js; no money logic reads/writes this
+// yet (that's phase 2b).
+model Customer {
+  id                 String   @id @default(cuid())
+  name               String
+  outstandingBalance Decimal  @default(0) @db.Decimal(10, 2)
+  creditBalance      Decimal  @default(0) @db.Decimal(10, 2)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  clients Client[]
 }
 
 model Delivery {
