@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { formatIstDateTime } = require('../lib/dateUtils');
+const { ensureCustomer } = require('../lib/customerBalance');
 
 const MAX_PLAUSIBLE_BOTTLES = 1000;
 
@@ -32,16 +33,23 @@ async function createClient(req, res) {
   if (!driver) return res.status(404).json({ error: 'Assigned driver not found' });
   if (!driver.isActive) return res.status(400).json({ error: 'Assigned driver is inactive' });
 
-  const client = await prisma.client.create({
-    data: {
-      name, mobile, email, address, assignedDriverId, tempoNumber, route,
-      ...(ratePerBottle !== undefined && { ratePerBottle }),
-    },
-    include: {
-      assignedDriver: {
-        include: { user: { select: { id: true, name: true, mobile: true } } },
+  // PHASE 2b: every client gets its own linked Customer at creation time
+  // (the balance's source of truth), created atomically with the client so
+  // neither can exist without the other.
+  const client = await prisma.$transaction(async (tx) => {
+    const customer = await tx.customer.create({ data: { name } });
+    return tx.client.create({
+      data: {
+        name, mobile, email, address, assignedDriverId, tempoNumber, route,
+        customerId: customer.id,
+        ...(ratePerBottle !== undefined && { ratePerBottle }),
       },
-    },
+      include: {
+        assignedDriver: {
+          include: { user: { select: { id: true, name: true, mobile: true } } },
+        },
+      },
+    });
   });
 
   res.status(201).json(client);
@@ -236,6 +244,7 @@ async function deletePayment(req, res) {
   if (!client) return res.status(404).json({ error: 'Client not found' });
 
   const amountToReverse = Number(payment.amountPaid);
+  const customer = await ensureCustomer(client);
 
   const candidates = await prisma.invoice.findMany({
     where: { clientId, amountPaid: { gt: 0 } },
@@ -267,6 +276,10 @@ async function deletePayment(req, res) {
   }
 
   await prisma.$transaction([
+    prisma.customer.update({
+      where: { id: customer.id },
+      data: { outstandingBalance: { increment: amountToReverse } },
+    }),
     prisma.client.update({
       where: { id: clientId },
       data: { outstandingBalance: { increment: amountToReverse } },
@@ -303,14 +316,18 @@ async function recalculateBalance(req, res) {
     _sum: { amountPaid: true },
   });
 
-  const oldBalance = Number(client.outstandingBalance);
+  const customer = await ensureCustomer(client);
+  const oldBalance = Number(customer.outstandingBalance);
   const rawBalance =
     Number(agg._sum.totalAmount ?? 0) -
     Number(agg._sum.amountPaid ?? 0) -
     Number(creditAppliedAgg._sum.amountPaid ?? 0);
   const newBalance = parseFloat(Math.max(0, rawBalance).toFixed(2));
 
-  await prisma.client.update({ where: { id: clientId }, data: { outstandingBalance: newBalance } });
+  await prisma.$transaction([
+    prisma.customer.update({ where: { id: customer.id }, data: { outstandingBalance: newBalance } }),
+    prisma.client.update({ where: { id: clientId }, data: { outstandingBalance: newBalance } }),
+  ]);
 
   res.json({ oldBalance, newBalance });
 }
@@ -353,7 +370,8 @@ async function addHistoricalRecord(req, res) {
   }
   const remaining = parseFloat((totalAmount - paid).toFixed(2));
 
-  const balanceBefore = Number(client.outstandingBalance);
+  const customer = await ensureCustomer(client);
+  const balanceBefore = Number(customer.outstandingBalance);
   const balanceAfter = balanceBefore + remaining;
 
   // Historical deliveries move real bottles too (just before the system went
@@ -401,6 +419,10 @@ async function addHistoricalRecord(req, res) {
         createdAt: deliveryDate,
       },
     }),
+    prisma.customer.update({
+      where: { id: customer.id },
+      data: { outstandingBalance: balanceAfter },
+    }),
     prisma.client.update({
       where: { id: clientId },
       data: {
@@ -412,12 +434,13 @@ async function addHistoricalRecord(req, res) {
     }),
   ];
 
-  const [invoice, updatedClient] = await prisma.$transaction(invoiceOps);
+  const [invoice, , updatedClient] = await prisma.$transaction(invoiceOps);
 
   if (paid > 0) {
     await prisma.paymentHistory.create({
       data: {
         clientId,
+        customerId: customer.id,
         invoiceId: invoice.id,
         amountPaid: paid,
         paymentMethod: paymentMethod || 'CASH',
@@ -474,11 +497,16 @@ async function deleteHistoricalRecord(req, res) {
   const newTotalDelivered = Math.max(0, invoice.client.totalBottlesDelivered - invoice.delivery.filledBottlesDelivered);
   const newTotalCollected = Math.max(0, invoice.client.totalBottlesCollected - invoice.delivery.emptyBottlesCollected);
   const newBottlesOut = Math.max(0, newTotalDelivered - newTotalCollected);
+  const customer = await ensureCustomer(invoice.client);
 
   await prisma.$transaction([
     prisma.paymentHistory.deleteMany({ where: { clientId, invoiceId: invoice.id } }),
     prisma.invoice.delete({ where: { id: invoiceId } }),
     prisma.delivery.delete({ where: { id: invoice.deliveryId } }),
+    prisma.customer.update({
+      where: { id: customer.id },
+      data: { outstandingBalance: { decrement: remainingUnpaid } },
+    }),
     prisma.client.update({
       where: { id: clientId },
       data: {

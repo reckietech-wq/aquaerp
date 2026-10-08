@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { istDayStart, istDayEnd } = require('../lib/dateUtils');
+const { ensureCustomer } = require('../lib/customerBalance');
 
 // PHASE 1 (multi-location): any authenticated driver may act on any client's
 // invoices — Client.assignedDriverId is no longer an access restriction here,
@@ -19,7 +20,7 @@ async function generateInvoice(req, res) {
       client: {
         select: {
           id: true, name: true, mobile: true, address: true, ratePerBottle: true,
-          outstandingBalance: true, creditBalance: true,
+          outstandingBalance: true, creditBalance: true, customerId: true,
         },
       },
       driver: { include: { user: { select: { id: true } } } },
@@ -56,6 +57,10 @@ async function generateInvoice(req, res) {
 
   const clientId = delivery.clientId;
 
+  // Customer (not Client) is the balance's source of truth as of phase 2b —
+  // ensureCustomer lazily links one if this client somehow still lacks it.
+  const customer = await ensureCustomer(delivery.client);
+
   // Each invoice is scoped to exactly this delivery's own bottles — no
   // summing across other deliveries. Multiple same-day deliveries each get
   // their own independent invoice; the consolidated view lives in
@@ -72,8 +77,8 @@ async function generateInvoice(req, res) {
   // credit balance (from a prior overpayment/advance) is auto-applied against
   // it immediately, down to 0 — so a client who's paid ahead never sees a new
   // delivery show up as newly "owed" while they still have credit sitting idle.
-  const outstandingAfterInvoice = parseFloat(delivery.client.outstandingBalance) + totalAmount;
-  const creditAvailable = parseFloat(delivery.client.creditBalance);
+  const outstandingAfterInvoice = parseFloat(customer.outstandingBalance) + totalAmount;
+  const creditAvailable = parseFloat(customer.creditBalance);
   const creditApplied = Math.min(creditAvailable, outstandingAfterInvoice);
   const finalOutstanding = parseFloat((outstandingAfterInvoice - creditApplied).toFixed(2));
   const finalCredit = parseFloat((creditAvailable - creditApplied).toFixed(2));
@@ -121,6 +126,11 @@ async function generateInvoice(req, res) {
         delivery: { select: { id: true, deliveryDate: true, filledBottlesDelivered: true } },
       },
     }),
+    prisma.customer.update({
+      where: { id: customer.id },
+      data: { outstandingBalance: finalOutstanding, creditBalance: finalCredit },
+    }),
+    // Belt-and-suspenders mirror onto the single linked client until phase 3.
     prisma.client.update({
       where: { id: clientId },
       data: { outstandingBalance: finalOutstanding, creditBalance: finalCredit },
@@ -132,6 +142,7 @@ async function generateInvoice(req, res) {
       prisma.paymentHistory.create({
         data: {
           clientId,
+          customerId: customer.id,
           amountPaid: creditApplied,
           paymentMethod: 'CREDIT_APPLIED',
           balanceBefore: outstandingAfterInvoice,
@@ -244,7 +255,10 @@ async function markInvoicePaid(req, res) {
   // creation time, so paying it off only subtracts the remaining unpaid
   // portion — it must never add totalAmount again.
   const remainingUnpaid = totalAmount - alreadyPaid;
-  const balanceBefore = parseFloat(invoice.client.outstandingBalance);
+
+  // Customer (not Client) is the balance's source of truth as of phase 2b.
+  const customer = await ensureCustomer(invoice.client);
+  const balanceBefore = parseFloat(customer.outstandingBalance);
 
   // Optional caller-supplied amountPaid lets this cover more than exactly
   // what's due (e.g. an admin recording a round-number cash payment) — any
@@ -256,7 +270,7 @@ async function markInvoicePaid(req, res) {
   const excess = Math.max(0, paidNow - Math.max(remainingUnpaid, 0));
 
   const balanceAfter = appliedToInvoice > 0 ? balanceBefore - appliedToInvoice : balanceBefore;
-  const creditBefore = parseFloat(invoice.client.creditBalance);
+  const creditBefore = parseFloat(customer.creditBalance);
   const creditAfter = creditBefore + excess;
 
   const operations = [
@@ -276,6 +290,11 @@ async function markInvoicePaid(req, res) {
 
   if (appliedToInvoice > 0 || excess > 0) {
     operations.push(
+      prisma.customer.update({
+        where: { id: customer.id },
+        data: { outstandingBalance: balanceAfter, creditBalance: creditAfter },
+      }),
+      // Belt-and-suspenders mirror onto the single linked client until phase 3.
       prisma.client.update({
         where: { id: invoice.clientId },
         data: { outstandingBalance: balanceAfter, creditBalance: creditAfter },
@@ -283,6 +302,7 @@ async function markInvoicePaid(req, res) {
       prisma.paymentHistory.create({
         data: {
           clientId: invoice.clientId,
+          customerId: customer.id,
           invoiceId: invoice.id,
           amountPaid: appliedToInvoice > 0 ? appliedToInvoice : excess,
           paymentMethod,
@@ -322,6 +342,7 @@ async function recordPayment(req, res) {
   });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
 
+  // Customer (not Client) is the balance's source of truth as of phase 2b.
   // outstandingBalance already includes every unpaid invoice's totalAmount
   // (added at invoice-creation time), so a payment only ever subtracts the
   // amount ACTUALLY applied to an invoice — it must never re-add any invoice
@@ -329,15 +350,19 @@ async function recordPayment(req, res) {
   // consumes (that was the phantom-credit bug: a resubmitted/late payment
   // with no unpaid invoice left to absorb it used to decrement the balance
   // by the full requested amount anyway).
-  const balanceBefore = parseFloat(invoice.client.outstandingBalance);
+  const customer = await ensureCustomer(invoice.client);
+  const balanceBefore = parseFloat(customer.outstandingBalance);
 
   // A single payment can cover more than the anchor invoice (e.g. a client
   // clearing several same-day deliveries' invoices at once). Apply the
-  // payment across that client's unpaid invoices oldest-first, starting
+  // payment across the CUSTOMER's unpaid invoices oldest-first (queried via
+  // client.customerId rather than clientId directly, so this is already
+  // phase-3-ready for a customer with multiple linked clients — today that
+  // set is identical since each customer has exactly one client), starting
   // with the anchor invoice, marking each fully covered invoice paid and
   // leaving any remainder applied as a partial payment on the next one.
   const unpaidInvoices = await prisma.invoice.findMany({
-    where: { clientId: invoice.clientId, isPaid: false },
+    where: { client: { customerId: customer.id }, isPaid: false },
     orderBy: { createdAt: 'asc' },
   });
   const ordered = [
@@ -378,7 +403,7 @@ async function recordPayment(req, res) {
   // total owed, or there were no unpaid invoices to begin with) becomes
   // credit rather than being dropped or pushing outstandingBalance negative.
   const excess = amount - actualApplied;
-  const creditBefore = parseFloat(invoice.client.creditBalance);
+  const creditBefore = parseFloat(customer.creditBalance);
   const creditAfter = creditBefore + excess;
 
   if (actualApplied === 0 && excess === 0) {
@@ -388,7 +413,12 @@ async function recordPayment(req, res) {
 
   const newBalance = balanceBefore - actualApplied;
 
-  const [updatedClient, payment, ...updatedInvoices] = await prisma.$transaction([
+  const [updatedCustomer, updatedClientMirror, payment, ...updatedInvoices] = await prisma.$transaction([
+    prisma.customer.update({
+      where: { id: customer.id },
+      data: { outstandingBalance: newBalance, creditBalance: creditAfter },
+    }),
+    // Belt-and-suspenders mirror onto the single linked client until phase 3.
     prisma.client.update({
       where: { id: invoice.clientId },
       data: { outstandingBalance: newBalance, creditBalance: creditAfter },
@@ -396,6 +426,7 @@ async function recordPayment(req, res) {
     prisma.paymentHistory.create({
       data: {
         clientId: invoice.clientId,
+        customerId: customer.id,
         invoiceId: actualApplied > 0 ? invoice.id : null,
         amountPaid: amount,
         paymentMethod,
@@ -417,7 +448,7 @@ async function recordPayment(req, res) {
   res.json({
     invoice: updatedInvoice,
     invoicesUpdated: updatedInvoices,
-    client: { outstandingBalance: updatedClient.outstandingBalance, creditBalance: updatedClient.creditBalance },
+    client: { outstandingBalance: updatedClientMirror.outstandingBalance, creditBalance: updatedClientMirror.creditBalance },
     payment,
     message: 'Payment recorded successfully',
   });
@@ -432,9 +463,15 @@ async function getClientStatement(req, res) {
     select: {
       id: true, name: true, address: true, route: true, ratePerBottle: true, outstandingBalance: true,
       creditBalance: true, bottlesOut: true, totalBottlesDelivered: true, totalBottlesCollected: true,
+      customerId: true,
     },
   });
   if (!client) return res.status(404).json({ error: 'Client not found' });
+
+  // Customer (not Client) is the balance's source of truth as of phase 2b —
+  // the response's `client.outstandingBalance`/`creditBalance` fields are
+  // overwritten from it below so the app sees the identical field paths.
+  const customer = await ensureCustomer(client);
 
   const unpaidInvoices = await prisma.invoice.findMany({
     where: { clientId, isPaid: false },
@@ -460,7 +497,7 @@ async function getClientStatement(req, res) {
   const todaysUnpaid = unpaidDeliveries.filter((d) => d.date >= start && d.date <= end);
   const todaysTotal = todaysUnpaid.reduce((s, d) => s + d.amount, 0);
   const totalUnpaid = unpaidDeliveries.reduce((s, d) => s + (d.amount - d.amountPaid), 0);
-  const grandTotalDue = Number(client.outstandingBalance);
+  const grandTotalDue = Number(customer.outstandingBalance);
   const previousOutstanding = grandTotalDue - todaysTotal;
 
   const upiId     = process.env.BUSINESS_UPI_ID || process.env.UPI_ID || '';
@@ -470,14 +507,14 @@ async function getClientStatement(req, res) {
     : '';
 
   res.json({
-    client,
+    client: { ...client, outstandingBalance: customer.outstandingBalance, creditBalance: customer.creditBalance },
     unpaidDeliveries,
     summary: {
       previousOutstanding,
       todaysTotal,
       totalUnpaid,
       grandTotalDue,
-      creditBalance: Number(client.creditBalance),
+      creditBalance: Number(customer.creditBalance),
       statementQrData,
     },
   });
@@ -504,7 +541,8 @@ async function setInvoiceStatus(req, res) {
 
   const totalAmount = parseFloat(invoice.totalAmount);
   const amountPaid  = parseFloat(invoice.amountPaid);
-  const balanceBefore = parseFloat(invoice.client.outstandingBalance);
+  const customer = await ensureCustomer(invoice.client);
+  const balanceBefore = parseFloat(customer.outstandingBalance);
 
   if (isPaid && !invoice.isPaid) {
     const remainingUnpaid = totalAmount - amountPaid;
@@ -515,6 +553,7 @@ async function setInvoiceStatus(req, res) {
         data: { isPaid: true, paidAt: new Date(), amountPaid: totalAmount },
         include: { client: { select: { id: true, name: true, mobile: true, outstandingBalance: true } } },
       }),
+      prisma.customer.update({ where: { id: customer.id }, data: { outstandingBalance: balanceAfter } }),
       prisma.client.update({ where: { id: invoice.clientId }, data: { outstandingBalance: balanceAfter } }),
     ]);
     return res.json(updated);
@@ -528,6 +567,7 @@ async function setInvoiceStatus(req, res) {
         data: { isPaid: false, paidAt: null, amountPaid: 0 },
         include: { client: { select: { id: true, name: true, mobile: true, outstandingBalance: true } } },
       }),
+      prisma.customer.update({ where: { id: customer.id }, data: { outstandingBalance: balanceAfter } }),
       prisma.client.update({ where: { id: invoice.clientId }, data: { outstandingBalance: balanceAfter } }),
     ]);
     return res.json(updated);
@@ -560,7 +600,12 @@ async function deleteInvoice(req, res) {
     prisma.invoice.delete({ where: { id: invoiceId } }),
   ];
   if (remainingUnpaid !== 0) {
+    const customer = await ensureCustomer(invoice.client);
     operations.push(
+      prisma.customer.update({
+        where: { id: customer.id },
+        data: { outstandingBalance: { decrement: remainingUnpaid } },
+      }),
       prisma.client.update({
         where: { id: invoice.clientId },
         data: { outstandingBalance: { decrement: remainingUnpaid } },

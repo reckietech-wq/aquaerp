@@ -1,6 +1,7 @@
 const prisma = require('../lib/prisma');
 const { adjustInventory } = require('../services/inventoryService');
 const { istDayStart, istDayEnd } = require('../lib/dateUtils');
+const { ensureCustomer } = require('../lib/customerBalance');
 
 const MAX_PLAUSIBLE_BOTTLES = 1000;
 
@@ -181,7 +182,7 @@ async function updateDelivery(req, res) {
 
   const delivery = await prisma.delivery.findUnique({
     where: { id },
-    include: { invoice: true, client: { select: { name: true } } },
+    include: { invoice: true, client: { select: { id: true, name: true, customerId: true, outstandingBalance: true, creditBalance: true } } },
   });
   if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
 
@@ -209,10 +210,13 @@ async function updateDelivery(req, res) {
     }),
   ];
 
+  let customer = null;
   if (delivery.invoice && filledDelta !== 0) {
     const rate = Number(delivery.invoice.amountPerBottle);
     const newTotalAmount = parseFloat((newFilled * rate).toFixed(2));
     const amountDelta = newTotalAmount - Number(delivery.invoice.totalAmount);
+
+    customer = await ensureCustomer(delivery.client);
 
     operations.push(
       prisma.invoice.update({
@@ -221,6 +225,10 @@ async function updateDelivery(req, res) {
           bottlesTakenSinceLastPaid: newFilled,
           totalAmount: newTotalAmount,
         },
+      }),
+      prisma.customer.update({
+        where: { id: customer.id },
+        data: { outstandingBalance: { increment: amountDelta } },
       }),
       prisma.client.update({
         where: { id: delivery.clientId },
@@ -266,7 +274,12 @@ async function deleteDelivery(req, res) {
     where: { id },
     include: {
       invoice: true,
-      client: { select: { name: true, totalBottlesDelivered: true, totalBottlesCollected: true } },
+      client: {
+        select: {
+          id: true, name: true, totalBottlesDelivered: true, totalBottlesCollected: true,
+          customerId: true, outstandingBalance: true, creditBalance: true,
+        },
+      },
     },
   });
   if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
@@ -297,7 +310,12 @@ async function deleteDelivery(req, res) {
       prisma.invoice.delete({ where: { id: delivery.invoice.id } }),
     );
     if (remainingUnpaid !== 0) {
+      const customer = await ensureCustomer(delivery.client);
       operations.push(
+        prisma.customer.update({
+          where: { id: customer.id },
+          data: { outstandingBalance: { decrement: remainingUnpaid } },
+        }),
         prisma.client.update({
           where: { id: delivery.clientId },
           data: { outstandingBalance: { decrement: remainingUnpaid } },

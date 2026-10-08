@@ -46,6 +46,10 @@ async function getMyClients(req, res) {
       },
       // Most recent past delivery for "last delivery date"
       _count: { select: { deliveries: true } },
+      // PHASE 2b: Customer is the balance's source of truth — mapped onto
+      // this response's outstandingBalance/creditBalance fields below so the
+      // app keeps reading identical field paths.
+      customer: { select: { outstandingBalance: true, creditBalance: true } },
     },
     orderBy: { name: 'asc' },
   });
@@ -94,8 +98,8 @@ async function getMyClients(req, res) {
       route: c.route,
       tempoNumber: c.tempoNumber,
       ratePerBottle: c.ratePerBottle,
-      outstandingBalance: c.outstandingBalance,
-      creditBalance: c.creditBalance,
+      outstandingBalance: c.customer?.outstandingBalance ?? c.outstandingBalance,
+      creditBalance: c.customer?.creditBalance ?? c.creditBalance,
       bottlesOut: c.bottlesOut,
       totalBottlesDelivered: c.totalBottlesDelivered,
       totalBottlesCollected: c.totalBottlesCollected,

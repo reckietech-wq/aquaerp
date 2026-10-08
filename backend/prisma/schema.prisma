@@ -108,7 +108,8 @@ model Customer {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  clients Client[]
+  clients        Client[]
+  paymentHistory PaymentHistory[]
 }
 
 model Delivery {
@@ -172,9 +173,13 @@ model Invoice {
 }
 
 model PaymentHistory {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   clientId      String
-  client        Client   @relation(fields: [clientId], references: [id])
+  client        Client    @relation(fields: [clientId], references: [id])
+  // PHASE 2b: payments are now also attached to the Customer (the balance's
+  // source of truth) — nullable so pre-2b rows aren't affected.
+  customerId    String?
+  customer      Customer? @relation(fields: [customerId], references: [id])
   invoiceId     String?
   amountPaid    Decimal  @db.Decimal(10, 2)
   paymentMethod String

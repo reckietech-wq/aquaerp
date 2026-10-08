@@ -40,6 +40,7 @@ async function getClientBillingCore(clientId, dateWhere) {
     select: {
       id: true, name: true, address: true, mobile: true, route: true,
       ratePerBottle: true, outstandingBalance: true,
+      customer: { select: { outstandingBalance: true } },
       assignedDriver: {
         select: {
           route: true, vehicleNumber: true, vehicleType: true,
@@ -92,7 +93,9 @@ async function getClientBillingCore(clientId, dateWhere) {
     totalBottles,
     totalBilled,
     totalPaid,
-    outstanding: Number(client.outstandingBalance),
+    // PHASE 2b: Customer is the balance's source of truth; fall back to the
+    // mirrored Client column only if this client somehow still lacks one.
+    outstanding: Number(client.customer?.outstandingBalance ?? client.outstandingBalance),
     status,
   };
 }
@@ -166,6 +169,7 @@ async function getClientMonthlySummary(clientId, from, to) {
     select: {
       id: true, name: true, address: true, mobile: true, route: true,
       ratePerBottle: true, outstandingBalance: true,
+      customer: { select: { outstandingBalance: true } },
       assignedDriver: {
         select: {
           route: true, vehicleNumber: true, vehicleType: true,
@@ -216,7 +220,7 @@ async function getClientMonthlySummary(clientId, from, to) {
     ratePerBottle: Number(client.ratePerBottle),
     months,
     totalBill,
-    outstanding: Number(client.outstandingBalance),
+    outstanding: Number(client.customer?.outstandingBalance ?? client.outstandingBalance),
     from,
     to,
   };
